@@ -82,6 +82,7 @@ impl Iterator for Dir {
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(p) = self.stack.pop_front() {
             if p.is_file() { return Some(p) }
+
             match read_dir(&p) {
                 Ok(es) => es.filter_map(Result::ok).for_each(|e| {
                     self.stack.push_back(e.path())
