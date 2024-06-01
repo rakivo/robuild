@@ -9,7 +9,7 @@ use std::{
     path::PathBuf,
     collections::VecDeque,
     thread::{self, JoinHandle},
-    process::{Command, Output, Stdio},
+    process::{Command, Output, Stdio}
 };
 
 const CMD_ARG: &str = if cfg!(windows) {"cmd"} else {"sh"};
