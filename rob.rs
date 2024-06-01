@@ -250,7 +250,6 @@ impl Rob {
     pub fn execute_sync(&mut self) -> Vec::<Result::<Output, ()>> {
         self.0.lines.iter().map(|line| {
             log!(LogLevel::CMD, "{line}");
-
             let out = Command::new(CMD_ARG)
                 .arg(CMD_ARG2)
                 .arg(&line)
