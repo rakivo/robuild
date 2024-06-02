@@ -1,16 +1,9 @@
-/// All of the `execute`-like functions moving command-pointer forward,
-/// if you wanna move the command-pointer manually, you can call the
-/// `move_cmd_ptr` function which is especially implemented for `execute_all_sync`
-/// and `execute_all_async` functions.
+//! # Robuild (rob)
+//! All of the `execute`-like functions moving command-pointer forward,
+//! if you wanna move the command-pointer manually, you can call the
+//! `move_cmd_ptr` function which is especially implemented for `execute_all_sync`
+//! and `execute_all_async` functions.
 use std::{
-    fs::{
-        rename,
-        metadata,
-        read_dir,
-        remove_file,
-        create_dir_all,
-        remove_dir_all
-    },
     io::ErrorKind,
     time::SystemTime,
     default::Default,
@@ -18,7 +11,22 @@ use std::{
     path::{Path, PathBuf},
     fmt::{Display, Formatter},
     process::{exit, Command, Output, Stdio, Child},
+    fs::{rename, metadata, read_dir, remove_file, create_dir_all, remove_dir_all},
 };
+
+pub const C_COMPILER: &str = if cfg!(feature = "gcc")     {"gcc"}
+                        else if cfg!(feature = "clang")   {"clang"}
+                        else if cfg!(feature = "mingw32") {"x86_64-w64-mingw32-gcc"}
+                        else if cfg!(windows)             {"cl.exe"}
+                        else                              {"cc"};
+pub const CC: &str = C_COMPILER;
+
+pub const CXX_COMPILER: &str = if cfg!(feature = "gxx")     {"g++"}
+                          else if cfg!(feature = "clangxx") {"clang++"}
+                          else if cfg!(feature = "mingw32") {"x86_64-w64-mingw32-g++"}
+                          else if cfg!(windows)             {"cl.exe"}
+                          else                              {"c++"};
+pub const CXXC: &str = CXX_COMPILER;
 
 pub const CMD_ARG: &str = if cfg!(windows) {"cmd"} else {"sh"};
 pub const CMD_ARG2: &str = if cfg!(windows) {"/C"} else {"-c"};
@@ -249,7 +257,7 @@ impl Rob {
         Ok(src_mod_time > bin_mod_time)
     }
 
-    fn needs_rebuild_many(bin: &str, srcs: &Vec::<&str>) -> IoResult::<bool> {
+    pub fn needs_rebuild_many(bin: &str, srcs: &Vec::<&str>) -> IoResult::<bool> {
         if !Rob::path_exists(bin) { return Ok(true) }
 
         let bin_mod_time = Rob::get_last_modification_time(bin)?;
@@ -520,7 +528,7 @@ impl Rob {
     }
 
     /// Returns vector of child which you can turn into vector of the outputs using Rob::wait_for_children.
-    pub fn execute_all_sync(&mut self) -> IoResult::<Vec::<Child>> {
+    pub fn execute_all_sync(&mut self) -> IoResult::<Vec::<Output>> {
         let mut outs = Vec::new();
         for line in self.cmd.lines.iter() {
             let args = line.join(" ");
@@ -534,7 +542,7 @@ impl Rob {
                    .stderr(Stdio::null());
             }
 
-            let out = cmd.spawn()?;
+            let out = cmd.output()?;
             outs.push(out);
         }
         Ok(outs)
