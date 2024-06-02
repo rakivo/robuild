@@ -7,13 +7,11 @@ use std::{
         remove_file,
         rename
     },
-    any::Any,
     time::SystemTime,
     collections::VecDeque,
     path::{Path, PathBuf},
-    thread::{self, JoinHandle},
     io::{ErrorKind, Result as ioResult},
-    process::{exit, Command, Output, Stdio},
+    process::{exit, Command, Output, Stdio, Child},
 };
 
 const CMD_ARG: &str = if cfg!(windows) {"cmd"} else {"sh"};
@@ -183,7 +181,11 @@ impl Rob {
                 .append(args)
                 .execute_sync()
             {
-                Ok(_) => exit(0),
+                Ok(_) => {
+                    log!(INFO, "REMOVING: {old_bin_path}");
+                    Rob::rm_if_exists(old_bin_path);
+                    exit(0);
+                }
                 Err(err) => {
                     log!(ERROR, "FAILED TO RESTART ROB FROM FILE: {binary_path}: {err}");
                     exit(1);
@@ -233,14 +235,25 @@ impl Rob {
     }
 
     #[inline]
-    pub fn mkdir<P>(p: P) -> ioResult<()>
+    pub fn mkdir<P>(p: P) -> ioResult::<()>
     where
         P: Into::<PathBuf>
     {
         create_dir_all(p.into())
     }
 
-    pub fn rm<P>(p: P) -> ioResult<()>
+    pub fn rm_if_exists<P>(p: P)
+    where
+        P: Into::<PathBuf> + ToOwned::<Owned = String>
+    {
+        if Rob::is_dir(p.to_owned()) {
+            remove_dir_all(p.into()).expect("Failed to remove directory")
+        } else if Rob::is_file(p.to_owned()) {
+            remove_file(p.into()).expect("Failed to remove file")
+        }
+    }
+
+    pub fn rm<P>(p: P) -> ioResult::<()>
     where
         P: Into::<PathBuf> + ToOwned::<Owned = String>
     {
@@ -362,14 +375,11 @@ impl Rob {
     /// More about that: https://doc.rust-lang.org/std/process/struct.Command.html
     ///
     /// Stdout and stderr are piped to manage all of the outputs properly.
-    /// Returns handle that waits for each child and contains vector of the outputs.
-    ///
-    /// To conveniently wait for the returned children you can use Rob::wait_for_children
-    pub fn execute_async(&mut self) -> ioResult::<JoinHandle::<Vec::<Output>>> {
+    /// Returns vector of child which you can turn into vector of the outputs using Rob::wait_for_children.
+    pub fn execute_async(&mut self) -> ioResult::<Vec::<Child>> {
         let mut children = Vec::new();
         for line in self.0.lines.iter() {
             log!(CMD, "{line}");
-
             let out = Command::new(CMD_ARG)
                 .arg(CMD_ARG2)
                 .arg(&line)
@@ -380,30 +390,15 @@ impl Rob {
             children.push(out);
         }
 
-        let handle = thread::spawn(move || {
-            children.into_iter().map(|child| {
-                child.wait_with_output().map_err(|err| {
-                    log!(PANIC, "FAILED TO WAIT FOR CHILD: {err}");
-                    err
-                }).unwrap()
-            }).collect()
-        });
-
-        Ok(handle)
+        Ok(children)
     }
 
     /// Blocks the main thread and waits for all of the children.
-    pub fn wait_for_children<E>(handle: JoinHandle::<Vec::<ioResult::<Output>>>) -> Result<(), E>
-    where
-        E: From::<Box<dyn Any + Send>>
-    {
-        handle.join()?
-            .iter()
-            .try_for_each(|res| {
-                if let Ok(out) = res {
-                    Rob::process_output(out);
-                } Ok(())
-            })
+    pub fn wait_for_children(children: Vec::<Child>) -> ioResult::<Vec::<Output>> {
+        let mut ret = Vec::new();
+        for child in children {
+            ret.push(child.wait_with_output()?);
+        } Ok(ret)
     }
 }
 
