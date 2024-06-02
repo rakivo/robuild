@@ -13,7 +13,7 @@ rust-version = "1.56.0"
 
 [lib]
 name = "robuild"
-path = "rob.rs"
+path = "librob.rs"
 
 [package.metadata.docs.rs]
 all-features = true
