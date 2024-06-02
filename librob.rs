@@ -7,16 +7,21 @@ use std::{
         remove_file,
         rename
     },
+    io::ErrorKind,
     time::SystemTime,
     collections::VecDeque,
     path::{Path, PathBuf},
-    io::{ErrorKind, Result as ioResult},
     process::{exit, Command, Output, Stdio, Child},
 };
 
-const CMD_ARG: &str = if cfg!(windows) {"cmd"} else {"sh"};
-const CMD_ARG2: &str = if cfg!(windows) {"/C"} else {"-c"};
+pub const CMD_ARG: &str = if cfg!(windows) {"cmd"} else {"sh"};
+pub const CMD_ARG2: &str = if cfg!(windows) {"/C"} else {"-c"};
 
+pub type IoResult<T> = std::io::Result::<T>;
+
+/// Call dis macro in your build recipe, and the program will
+/// rebuild itself, freeing you from the need to rebuilding your
+/// build recipe file
 #[macro_export]
 macro_rules! go_rebuild_yourself {
     () => {{
@@ -32,6 +37,17 @@ macro_rules! colored {
     (br.$str: expr) => { format!("\x1b[31m{}\x1b[0m", $str) };
 }
 
+/// You can log things just like we're logging in Rob functions,
+/// pass the `LogLevel` enum variant and then format your output like you'r
+/// using the `println`! macro. For instance:
+/// ```
+/// let what = "logging";
+/// log!(INFO, "This is how you can do {what}");
+/// ```
+/// This will print:
+/// ```
+/// [INFO] This is how you can do logging
+/// ```
 #[macro_export]
 macro_rules! log {
     ($log_level: tt, $($args: expr), *) => {{
@@ -49,6 +65,8 @@ macro_rules! log {
     }}
 }
 
+/// Macro similar to the vec! macro, but produces
+/// `std::path::Pathbuf` instead of `std::vec::Vec`
 #[macro_export]
 macro_rules! pathbuf {
     ($($p: expr), *) => {{
@@ -58,6 +76,13 @@ macro_rules! pathbuf {
     }}
 }
 
+/// Just pass strs and it will create directories,
+/// whether it nested or not. For instance:
+/// ```
+/// mkdirs!("just", "for", "example");
+/// ```
+/// Regardless of the target os will create `just` directory having in it
+/// `for` and `example` directories.
 #[macro_export]
 macro_rules! mkdirs {
     ($($dir: expr), *) => {{
@@ -105,10 +130,6 @@ impl Iterator for Dir {
     }
 }
 
-pub struct RobCommand {
-    lines: Vec::<String>,
-}
-
 pub enum LogLevel {
     CMD,
     INFO,
@@ -130,22 +151,33 @@ impl std::fmt::Display for LogLevel {
     }
 }
 
+pub struct RobCommand {
+    lines: Vec::<Vec::<String>>,
+}
+
 impl RobCommand {
     #[inline]
     pub fn new() -> RobCommand {
-        Self { lines: Vec::new() }
+        Self { lines: vec![Vec::new()] }
     }
 }
 
-pub struct Rob(RobCommand);
+pub struct Rob {
+    cmd: RobCommand,
+    cp: usize,
+    output_stack: VecDeque::<Output>
+}
 
 impl Rob {
-    #[inline]
     pub fn new() -> Rob {
-        Rob(RobCommand::new())
+        Rob {
+            cmd: RobCommand::new(),
+            cp: 0,
+            output_stack: VecDeque::new()
+        }
     }
 
-    fn needs_rebuild(bin: &str, srcs: &Vec::<&str>) -> ioResult::<bool> {
+    fn needs_rebuild(bin: &str, srcs: &Vec::<&str>) -> IoResult::<bool> {
         if !Rob::path_exists(bin) { return Ok(true) }
 
         let bin_mod_time = Rob::get_last_modification_time(bin)?;
@@ -159,7 +191,30 @@ impl Rob {
 
     // The implementation idea is stolen from https://github.com/tsoding/nobuild,
     // which is also stolen from https://github.com/zhiayang/nabs
-    pub fn go_rebuild_yourself(args: &Vec::<String>, source_path: &str) -> ioResult::<()> {
+    /// Modified text from: https://github.com/tsoding/nobuild
+    /// `Go Rebuild Urself™ Technology`
+    ///
+    /// How to use it:
+    /// ```
+    /// fn main() {
+    ///     go_rebuild_yourself!();
+    ///     // actual work
+    /// }
+    /// ```
+    ///
+    /// After your added this macro every time you run `./rob` it will detect
+    /// that you modified its original source code and will try to rebuild itself
+    /// before doing any actual work. So you only need to bootstrap your build system
+    /// once.
+    ///
+    /// The modification is detected by comparing the last modified times of the executable
+    /// and its source code. The same way the make utility usually does it.
+    ///
+    /// The rebuilding is done by using the `go_rebuild_yourself` macro which you can redefine
+    /// if you need a special way of bootstraping your build system. (which I personally
+    /// do not recommend since the whole idea of robuild is to keep the process of bootstrapping
+    /// as simple as possible and doing all of the actual work inside of the nobuild)
+    pub fn go_rebuild_yourself(args: &Vec::<String>, source_path: &str) -> IoResult::<()> {
         assert!(args.len() >= 1);
         let binary_path = &args[0];
         let rebuild_is_needed = Rob::needs_rebuild(&binary_path, &vec![source_path])?;
@@ -195,7 +250,7 @@ impl Rob {
     }
 
     #[inline]
-    pub fn get_last_modification_time<P>(p: P) -> ioResult::<SystemTime>
+    pub fn get_last_modification_time<P>(p: P) -> IoResult::<SystemTime>
     where
         P: AsRef::<Path>
     {
@@ -227,7 +282,7 @@ impl Rob {
     }
 
     #[inline]
-    pub fn rename<P>(from: P, to: P) -> ioResult<()>
+    pub fn rename<P>(from: P, to: P) -> IoResult<()>
     where
         P: AsRef::<Path>
     {
@@ -235,7 +290,7 @@ impl Rob {
     }
 
     #[inline]
-    pub fn mkdir<P>(p: P) -> ioResult::<()>
+    pub fn mkdir<P>(p: P) -> IoResult::<()>
     where
         P: Into::<PathBuf>
     {
@@ -253,7 +308,7 @@ impl Rob {
         }
     }
 
-    pub fn rm<P>(p: P) -> ioResult::<()>
+    pub fn rm<P>(p: P) -> IoResult::<()>
     where
         P: Into::<PathBuf> + ToOwned::<Owned = String>
     {
@@ -269,11 +324,11 @@ impl Rob {
     }
 
     #[inline]
-    fn panic(out: &str) -> ! {
+    pub fn panic(out: &str) -> ! {
         panic!("{out}", out = out.to_owned())
     }
 
-    fn log(lvl: LogLevel, out: &str, f: &str, l: u32, c: u32) {
+    pub fn log(lvl: LogLevel, out: &str, f: &str, l: u32, c: u32) {
         use self::LogLevel::*;
         let out_with_info = format!("{f}:{l}:{c}: {out}");
         match lvl {
@@ -291,11 +346,6 @@ impl Rob {
         p.chars().take_while(|x| *x != '.').collect()
     }
 
-    /* TODO:
-    Change the way how we treating lines, i think we should introduce
-    some new function like `execute_last_sync` or something, that just moves command pointer
-    therefore following input will be treated as next line and so on, if ykwim
-    */
     /// Takes all of the args and pushes them to self.lines,
     /// Each call of the append function will be treated as one line of arguments, as in here:
     /// ```
@@ -307,22 +357,18 @@ impl Rob {
     /// It Outputs:
     /// ```
     /// [CMD] clang++ -o output test/test1/test.cpp
-    /// [INFO] [EMPTY]
     /// ```
-    ///
-    /// Output is [EMPTY] because the program compiled successfully.
     #[inline]
-    pub fn append<'a, I, S>(&mut self, args: I) -> &mut Self
+    pub fn append<I, S>(&mut self, args: I) -> &mut Self
     where
         I: IntoIterator::<Item = S>,
         S: AsRef<str>
     {
-        let line = args.into_iter()
+        let args = args.into_iter()
             .map(|arg| arg.as_ref().to_owned())
-            .collect::<Vec<_>>()
-            .join(" ");
+            .collect::<Vec<_>>();
 
-        self.0.lines.push(line);
+        self.cmd.lines.last_mut().unwrap().extend(args);
         self
     }
 
@@ -350,55 +396,122 @@ impl Rob {
         }
     }
 
+    /// Function for receiving outputs of the commands. For instance:
+    /// ```
+    /// let mut rob = Rob::new();
+    ///
+    /// rob
+    ///     .append(&["echo hello"])
+    ///     .execute()?
+    ///     .append(&["clang", "-o build/output", "./test/main.c"])
+    ///     .execute()?
+    ///     .append(&["clang++", "-o build/outputpp", "./test/main.cpp"])
+    ///     .execute()?
+    ///     .append(&["echo byebye"])
+    ///     .execute()?;
+    ///
+    /// while let Some(out) = rob.output() {
+    ///     println!("{out:?}");
+    /// }
+    /// ```
+    /// Will print:
+    /// ```
+    /// [CMD] echo hello
+    /// [INFO] hello
+    /// [CMD] clang -o build/output ./test/main.c
+    /// [CMD] clang++ -o build/outputpp ./test/main.cpp
+    /// [CMD] echo byebye
+    /// [INFO] byebye
+    /// Output { status: ExitStatus(unix_wait_status(0)), stdout: "hello\n", stderr: "" }
+    /// Output { status: ExitStatus(unix_wait_status(0)), stdout: "", stderr: "" }
+    /// Output { status: ExitStatus(unix_wait_status(0)), stdout: "", stderr: "" }
+    /// Output { status: ExitStatus(unix_wait_status(0)), stdout: "byebye\n", stderr: "" }
+    /// ```
+    /// As you can see, you receiving outputs in the reversed order, i think this is the best way of doing that.
+    #[inline]
+    pub fn output(&mut self) -> Option::<Output> {
+        self.output_stack.pop_front()
+    }
+
+    #[inline]
+    pub fn outputs_refs(&self) -> Vec::<&Output> {
+        self.output_stack.iter().collect()
+    }
+
+    #[inline]
+    pub fn outputs(self) -> Vec::<Output> {
+        self.output_stack.into_iter().collect()
+    }
+
+    /// Blocking operation.
+    ///
+    /// It is a second version of the `Rob::execute_sync` function, especially
+    /// to use in one line. For instance:
+    /// ```
+    /// Rob::new()
+    ///     .append(&["clang", "-o build/output", "./test/main.c"])
+    ///     .execute()?
+    ///     .append(&["clang++", "-o build/outputpp", "./test/main.cpp"])
+    ///     .execute()?;
+    /// ```
+    /// After executing command, its output will be pushed into the output_stack.
+    /// If you need, you can get the output via calling the `Rob::get_output` function.
+    pub fn execute(&mut self) -> IoResult::<&mut Self> {
+        let args = self.cmd.lines[self.cp].join(" ");
+
+        log!(CMD, "{args}");
+        let out = Command::new(CMD_ARG)
+            .arg(CMD_ARG2)
+            .arg(&args)
+            .output()?;
+
+        Self::process_output(&out);
+
+        self.cmd.lines.push(Vec::new());
+        self.cp += 1;
+        self.output_stack.push_back(out);
+        Ok(self)
+    }
+
     /// Blocking operation.
     ///
     /// Simply creates `Command` for each line in self.lines and executes them.
-    /// More about that: https://doc.rust-lang.org/std/process/struct.Command.html
-    pub fn execute_sync(&mut self) -> ioResult::<Vec::<Output>> {
-        let mut ret = Vec::new();
+    /// More about that: `https://doc.rust-lang.org/std/process/struct.Command.html`
+    pub fn execute_sync(&mut self) -> IoResult::<Output> {
+        let args = self.cmd.lines[self.cp].join(" ");
 
-        for line in self.0.lines.iter() {
-            log!(CMD, "{line}");
-            let out = Command::new(CMD_ARG)
-                .arg(CMD_ARG2)
-                .arg(&line)
-                .output()?;
+        log!(CMD, "{args}");
+        let out = Command::new(CMD_ARG)
+            .arg(CMD_ARG2)
+            .arg(&args)
+            .output()?;
 
-            Self::process_output(&out);
-            ret.push(out);
-        } Ok(ret)
+        Self::process_output(&out);
+        self.cmd.lines.push(Vec::new());
+        self.cp += 1;
+        Ok(out)
     }
 
     /// Non-blocking operation.
     ///
     /// Created `Command` for each line in self.lines.
-    /// More about that: https://doc.rust-lang.org/std/process/struct.Command.html
+    /// More about that: `https://doc.rust-lang.org/std/process/struct.Command.html`
     ///
     /// Stdout and stderr are piped to manage all of the outputs properly.
-    /// Returns vector of child which you can turn into vector of the outputs using Rob::wait_for_children.
-    pub fn execute_async(&mut self) -> ioResult::<Vec::<Child>> {
-        let mut children = Vec::new();
-        for line in self.0.lines.iter() {
-            log!(CMD, "{line}");
-            let out = Command::new(CMD_ARG)
-                .arg(CMD_ARG2)
-                .arg(&line)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()?;
+    pub fn execute_async(&mut self) -> IoResult::<Child> {
+        let args = self.cmd.lines[self.cp].join(" ");
 
-            children.push(out);
-        }
+        log!(CMD, "{args}");
+        let child = Command::new(CMD_ARG)
+            .arg(CMD_ARG2)
+            .arg(&args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
 
-        Ok(children)
-    }
-
-    /// Blocks the main thread and waits for all of the children.
-    pub fn wait_for_children(children: Vec::<Child>) -> ioResult::<Vec::<Output>> {
-        let mut ret = Vec::new();
-        for child in children {
-            ret.push(child.wait_with_output()?);
-        } Ok(ret)
+        self.cmd.lines.push(Vec::new());
+        self.cp += 1;
+        Ok(child)
     }
 }
 
