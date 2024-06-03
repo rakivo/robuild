@@ -2,31 +2,21 @@ name: CI
 on: [push, pull_request]
 
 jobs:
-  build-linux-gcc:
+  build-linux:
     runs-on: ubuntu-18.04
     steps:
       - uses: actions/checkout@v1
       - name: build
         run: |
-          rustc -A dead_code -o rob rob.rs
-          ./rob
-  build-linux-clang:
-    runs-on: ubuntu-18.04
-    steps:
-      - uses: actions/checkout@v1
-      - name: build
-        run: |
-          rustc -A dead_code -o rob rob.rs
-          ./rob
+          cargo run --example rob
   build-macos:
     runs-on: macOS-latest
     steps:
       - uses: actions/checkout@v1
       - name: build
         run: |
-          rustc -A dead_code -o rob rob.rs
-          ./rob
-  build-windows-msvc:
+          cargo run --example rob
+  build-windows:
     runs-on: windows-2019
     steps:
       - uses: actions/checkout@v1
@@ -36,5 +26,4 @@ jobs:
         shell: cmd
         # this replaces default PowerShell, which can't fail the build
         run: |
-          rustc -A dead_code -o rob rob.rs
-          .\rob
+          cargo run --example rob

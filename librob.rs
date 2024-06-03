@@ -1,4 +1,69 @@
 //! # Robuild (rob)
+//! # For example, this is how I build examples for my [virtual machine](https://github.com/rakivo/mm) with the [robuild](https://github.com/rakivo/robuild)
+//! ```
+//! use robuild::*;
+//! use std::process::Output;
+//!
+//! const THREADS: &str = "-Z threads=10";
+//! const LIB_FLAGS: &str = "--crate-type=rlib";
+//! const DEBUG_FLAGS: &str = "-g -C \"opt-level=0\"";
+//!
+//! const BUILD: &str = "build";
+//! const EXAMPLES: &str = "examples";
+//!
+//! fn main() -> IoResult::<()> {
+//!     go_rebuild_yourself!(?);
+//!
+//!     Rob::mkdir(path!("examples", "build")).unwrap();
+//!
+//!     let mut rob = Rob::new();
+//!     build_rakivo_mm(&mut rob)?;
+//!     test_rakivo_mm(&mut rob)?;
+//!
+//!     Ok(())
+//! }
+//!
+//! fn build_file(rob: &mut Rob, out: &str, name: &str, flags: &str) {
+//!     let build_dir = path!(EXAMPLES, BUILD);
+//!     let link_with_mm_flags: &str = &format!("--extern mm={path}", path = format!("{build_dir}/libmm.rlib"));
+//!     rob.append(&["rustc", DEBUG_FLAGS, flags, THREADS, link_with_mm_flags, "-o",
+//!                  &format!("{build_dir}/{out}"),
+//!                  &path!(EXAMPLES, "mm", &format!("{name}.rs"))]);
+//! }
+//!
+//! // Link to Rakivo's mm: https://github.com/rakivo/mm
+//! fn build_rakivo_mm(rob: &mut Rob) -> IoResult::<Vec::<Output>> {
+//!     build_file(rob, "libmm.rlib", "mm", LIB_FLAGS);
+//!     build_file(rob, "load_from_binary", &path!("examples", "load_from_binary"), "");
+//!     build_file(rob, "translate_masm", &path!("examples", "translate_masm"), "");
+//!     rob.execute_all_sync()
+//! }
+//!
+//! fn test_rakivo_mm(rob: &mut Rob) -> IoResult::<()> {
+//!     use std::fs::read_to_string;
+//!
+//!     let build_dir = path!(EXAMPLES, BUILD);
+//!     let output_path = format!("{build_dir}/fibm.out");
+//!     let expected_path = path!(EXAMPLES, "mm", "load_from_binary.expected");
+//!
+//!     rob.append(&[&format!("{build_dir}/translate_masm"),
+//!                  &path!(EXAMPLES, "mm", "fib.masm"),
+//!                  &format!("{build_dir}/fibm")])
+//!        .append(&[&format!("{build_dir}/load_from_binary"),
+//!                   &format!("{p1} > {p2}", p1 = &format!("{build_dir}/fibm"), p2 = &output_path)])
+//!        .execute_all_sync()?;
+//!
+//!     let output_string = read_to_string(&output_path)?;
+//!     let expected_string = read_to_string(&expected_path)?;
+//!     if output_string.trim() != expected_string.trim() {
+//!         log!(PANIC, "Output of {output_path} doesn't equal to the expected one: {expected_path}");
+//!     } else {
+//!         log!(INFO, "TEST: `translate_masm`: OK");
+//!     }
+//!
+//!     Ok(())
+//! }
+//! ```
 //! All of the `execute`-like functions moving command-pointer forward,
 //! if you wanna move the command-pointer manually, you can call the
 //! `move_cmd_ptr` function which is especially implemented for `execute_all_sync`
@@ -28,6 +93,7 @@ pub const CXX_COMPILER: &str = if cfg!(feature = "gxx")     {"g++"}
                           else                              {"c++"};
 pub const CXXC: &str = CXX_COMPILER;
 
+pub const DELIM: &str = if cfg!(windows) {"\\"} else {"/"};
 pub const CMD_ARG: &str = if cfg!(windows) {"cmd"} else {"sh"};
 pub const CMD_ARG2: &str = if cfg!(windows) {"/C"} else {"-c"};
 
@@ -87,6 +153,16 @@ macro_rules! pathbuf {
         let mut path = std::path::PathBuf::new();
         $(path.push($p);)*
         path
+    }}
+}
+
+/// Macro similar to the vec! macro, but produces
+/// `std::path::Pathbuf` instead of `std::vec::Vec`
+#[macro_export]
+macro_rules! path {
+    ($($p: expr), *) => {{
+        let  path = [$($p), *];
+        path.join(DELIM)
     }}
 }
 
@@ -516,8 +592,14 @@ impl Rob {
     /// If you need, you can get the output via calling the `Rob::get_output` function.
     pub fn execute(&mut self) -> IoResult::<&mut Self> {
         let out = self.execute_sync_helper()?;
+        println!("{out:?}");
         self.output_stack.push_back(out);
         Ok(self)
+    }
+
+    pub fn execute_and_get_output(&mut self) -> IoResult::<Output> {
+        let out = self.execute_sync_helper()?;
+        Ok(out)
     }
 
     fn execute_sync_helper(&mut self) -> IoResult::<Output> {
