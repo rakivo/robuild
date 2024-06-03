@@ -237,6 +237,7 @@ pub struct Rob {
     cmd: RobCommand,
     cp: usize,
     echo: bool,
+    keepgoing: bool,
     child_stack: VecDeque::<Child>,
     output_stack: VecDeque::<Output>
 }
@@ -298,13 +299,25 @@ impl Rob {
             log!(INFO, "RENAMING: {binary_path} -> {old_bin_path}");
             Rob::rename(binary_path, &old_bin_path)?;
 
-            if let Err(err) = Rob::new()
+            let self_compilation_output = Rob::new()
                 .append(&["rustc -o", binary_path, source_path])
-                .execute_sync()
-            {
-                log!(ERROR, "FAILED TO RENAME FILE: {old_bin_path}: {err}");
-                Rob::rename(&old_bin_path, binary_path)?;
-                exit(1);
+                .execute_sync();
+
+            match self_compilation_output {
+                Ok(out) => if !out.status.success() {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    log!(ERROR, "{stderr}");
+                    let code = out.status.code()
+                        .expect("Process terminated by signal");
+                    log!(ERROR, "Compilation exited abnormally with code: {code}");
+                    Rob::rename(&old_bin_path, binary_path)?;
+                    exit(1);
+                }
+                Err(err) => {
+                    log!(ERROR, "Failed to rename file: {old_bin_path}: {err}");
+                    Rob::rename(&old_bin_path, binary_path)?;
+                    exit(1);
+                }
             }
 
             match Rob::new()
@@ -451,16 +464,16 @@ impl Rob {
         }
     }
 
-    fn process_output(&self, out: &Output) {
+    fn render_output(out: &Output, echo: &bool) {
         if out.status.success() {
             let stdout = String::from_utf8_lossy(&out.stdout);
-            if !stdout.is_empty() && self.echo {
+            if !stdout.is_empty() && *echo {
                 let formatted = Rob::format_out(&stdout);
                 log!(INFO, "{formatted}");
             }
         } else {
             let stderr = String::from_utf8_lossy(&out.stderr);
-            if !stderr.is_empty() && self.echo {
+            if !stderr.is_empty() && *echo {
                 let formatted = Rob::format_out(&stderr);
                 log!(ERROR, "{formatted}");
             }
@@ -470,6 +483,12 @@ impl Rob {
     #[inline]
     pub fn echo(&mut self, echo: bool) -> &mut Self {
         self.echo = echo;
+        self
+    }
+
+    #[inline]
+    pub fn keepgoing(&mut self, keepgoing: bool) -> &mut Self {
+        self.keepgoing = keepgoing;
         self
     }
 
@@ -522,8 +541,18 @@ impl Rob {
 
         let out = cmd.output()?;
 
+        if !self.keepgoing && !out.status.success() {
+            let code = out.status.code()
+                .expect("Process terminated by signal");
+
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            log!(ERROR, "{stderr}");
+            log!(ERROR, "Compilation exited abnormally with code: {code}");
+            exit(1);
+        }
+
         self.cp += 1;
-        self.process_output(&out);
+        Rob::render_output(&out, &self.echo);
         Ok(out)
     }
 
@@ -543,6 +572,17 @@ impl Rob {
             }
 
             let out = cmd.output()?;
+
+            if !self.keepgoing && !out.status.success() {
+                let code = out.status.code()
+                    .expect("Process terminated by signal");
+
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                log!(ERROR, "{stderr}");
+                log!(ERROR, "Compilation exited abnormally with code: {code}");
+                exit(1);
+            }
+
             outs.push(out);
         }
         Ok(outs)
@@ -576,18 +616,13 @@ impl Rob {
             log!(CMD, "{args}");
         }
 
-        let mut cmd = Command::new(CMD_ARG);
-        cmd.arg(CMD_ARG2).arg(args);
+        let child = Command::new(CMD_ARG)
+            .arg(CMD_ARG2)
+            .arg(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
 
-        if self.echo {
-            cmd.stdout(Stdio::piped())
-               .stderr(Stdio::piped());
-        } else {
-            cmd.stdout(Stdio::null())
-               .stderr(Stdio::null());
-        }
-
-        let child = cmd.spawn()?;
         self.cp += 1;
         Ok(child)
     }
@@ -600,21 +635,25 @@ impl Rob {
 
             if self.echo { log!(CMD, "{args}"); }
             let mut cmd = Command::new(CMD_ARG);
-            cmd.arg(CMD_ARG2).arg(args);
+            cmd.arg(CMD_ARG2).arg(&args);
 
-            if self.echo {
-                cmd.stdout(Stdio::piped())
-                    .stderr(Stdio::piped());
-            } else {
-                cmd.stdout(Stdio::null())
-                    .stderr(Stdio::null());
-            }
-
-            let child = cmd.spawn()?;
+            let child = Command::new(CMD_ARG)
+                .arg(CMD_ARG2)
+                .arg(args)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()?;
 
             children.push(child);
         }
         Ok(children)
+    }
+
+    /// Returns vector of child which you can turn into vector of the outputs using Rob::wait_for_children.
+    pub fn execute_all_async_and_wait(&mut self) -> IoResult::<()> {
+        let children = self.execute_all_async()?;
+        Rob::wait_for_children_deq(children.into(), &self.echo)?;
+        Ok(())
     }
 
     /// Non-Blocking operation.
@@ -637,18 +676,19 @@ impl Rob {
     }
 
     /// Blocks the main thread and waits for all of the children.
-    pub fn wait_for_children_deq(mut children: VecDeque::<Child>) -> IoResult::<Vec::<Output>> {
+    pub fn wait_for_children_deq(mut children: VecDeque::<Child>, echo: &bool) -> IoResult::<Vec::<Output>> {
         let mut ret = Vec::new();
         while let Some(child) = children.pop_front() {
             let out = Rob::wait_for_child(child)?;
+            Rob::render_output(&out, echo);
             ret.push(out);
         } Ok(ret)
     }
 
-    /// ! MOVES SELF ! IF you don't wanna move self you can call the `wait_for_children_deq` function.
+    /// ! MOVES SELF !
     /// Blocks the main thread and waits for all of the children.
     pub fn wait_for_children(self) -> IoResult::<Vec::<Output>> {
-        Rob::wait_for_children_deq(self.child_stack)
+        Rob::wait_for_children_deq(self.child_stack, &self.echo)
     }
 
     /// Blocks the main thread and waits for the child.
@@ -658,9 +698,20 @@ impl Rob {
     }
 }
 
-/* TODO:
-    README,
-    Examples,
-    Other Nob features,
-    Documentation,
+/*
+More important TODOs:
+    (#1): Introduce job system,
+    because you need to have an ability to
+    say to the rob, that something need to be
+    compiled before something else ykwim.
+
+    (#2): Change the command ptr system, maybe
+    use VecDeque instead of Vec and pop lines
+    that were executed or something like that.
+
+Less important TODOs:
+    README;
+    Examples;
+    Other Nob features;
+    Documentation;
 */
