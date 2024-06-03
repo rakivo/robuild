@@ -5,7 +5,8 @@ use std::process::Output;
 // const THREADS: &str = "-Z threads=10";
 const THREADS: &str = "";
 const LIB_FLAGS: &str = "--crate-type=rlib";
-const DEBUG_FLAGS: &str = "-g -C \"opt-level=0\"";
+// const DEBUG_FLAGS: &str = "-g -C \"opt-level=0\"";
+const DEBUG_FLAGS: &str = "";
 
 const BUILD: &str = "build";
 const EXAMPLES: &str = "examples";
