@@ -51,7 +51,7 @@ macro_rules! go_rebuild_yourself {
     }}
 }
 
-/// You can log things just like we're logging in Rob functions,
+/// You can log things just like we do in Rob functions,
 /// pass the `LogLevel` enum variant and then format your output like you'r
 /// using the `println`! macro. For instance:
 /// ```
@@ -700,13 +700,15 @@ impl Rob {
 
 /*
 More important TODOs:
-    (#1): Introduce job system,
-    because you need to have an ability to
+    (#1): Introduce job system.
+    Because you need to have an ability to
     say to the rob, that something need to be
     compiled before something else ykwim.
 
-    (#2): Change the command ptr system, maybe
-    use VecDeque instead of Vec and pop lines
+    (#2): Change the command ptr system.
+    Because you can't combine execute single line function,
+    and execute all functions, everything breakes because of that system,
+    maybe we need use VecDeque instead of Vec and pop lines,
     that were executed or something like that.
 
 Less important TODOs:
