@@ -161,7 +161,7 @@ macro_rules! pathbuf {
 #[macro_export]
 macro_rules! path {
     ($($p: expr), *) => {{
-        let  path = [$($p), *];
+        let path = [$($p), *];
         path.join(DELIM)
     }}
 }
@@ -368,7 +368,8 @@ impl Rob {
     /// and its source code. The same way the make utility usually does it.
     pub fn go_rebuild_yourself(args: &Vec::<String>, source_path: &str) -> IoResult::<()> {
         assert!(args.len() >= 1);
-        let binary_path = &args[0];
+        let binary_pathbuf = std::env::current_exe()?;
+        let binary_path = binary_pathbuf.to_str().to_owned().unwrap();
         let rebuild_is_needed = Rob::needs_rebuild(&binary_path, source_path)?;
         if rebuild_is_needed {
             let old_bin_path = format!("{binary_path}.old");
@@ -386,12 +387,12 @@ impl Rob {
                     let code = out.status.code()
                         .expect("Process terminated by signal");
                     log!(ERROR, "Compilation exited abnormally with code: {code}");
-                    Rob::rename(&old_bin_path, binary_path)?;
+                    Rob::rename(old_bin_path.as_str(), binary_path)?;
                     exit(1);
                 }
                 Err(err) => {
                     log!(ERROR, "Failed to rename file: {old_bin_path}: {err}");
-                    Rob::rename(&old_bin_path, binary_path)?;
+                    Rob::rename(old_bin_path.as_str(), binary_path)?;
                     exit(1);
                 }
             }

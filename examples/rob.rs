@@ -24,10 +24,10 @@ fn main() -> IoResult::<()> {
 }
 
 fn build_file(rob: &mut Rob, out: &str, name: &str, flags: &str) {
-    let build_dir = path!(EXAMPLES, BUILD);
-    let link_with_mm_flags: &str = &format!("--extern mm={path}", path = format!("{build_dir}/libmm.rlib"));
+    let build_dir = &path!(EXAMPLES, BUILD);
+    let link_with_mm_flags: &str = &format!("--extern mm={path}", path = path!(build_dir, "libmm.rlib"));
     rob.append(&["rustc", DEBUG_FLAGS, flags, THREADS, link_with_mm_flags, "-o",
-                 &format!("{build_dir}/{out}"),
+                 &path!(build_dir, out),
                  &path!(EXAMPLES, "mm", &format!("{name}.rs"))]);
 }
 
@@ -42,11 +42,11 @@ fn build_rakivo_mm(rob: &mut Rob) -> IoResult::<Vec::<Output>> {
 fn test_rakivo_mm(rob: &mut Rob) -> IoResult::<()> {
     use std::fs::read_to_string;
 
-    let build_dir = path!(EXAMPLES, BUILD);
-    let output_path = format!("{build_dir}/fibm.out");
+    let build_dir = &path!(EXAMPLES, BUILD);
+    let output_path = path!(build_dir, "fibm.out");
     let expected_path = path!(EXAMPLES, "mm", "load_from_binary.expected");
 
-    rob.append(&[&format!("{build_dir}/translate_masm"),
+    rob.append(&[&path!(build_dir, "translate_masm"),
                  &path!(EXAMPLES, "mm", "fib.masm"),
                  &format!("{build_dir}/fibm")])
        .append(&[&format!("{build_dir}/load_from_binary"),
