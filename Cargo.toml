@@ -20,7 +20,7 @@ mingw32 = []
 
 [lib]
 name = "robuild"
-path = "librob.rs"
+path = "rob.rs"
 
 [package.metadata.docs.rs]
 all-features = true
