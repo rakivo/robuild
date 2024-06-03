@@ -23,20 +23,23 @@ fn main() -> IoResult::<()> {
     Ok(())
 }
 
-fn build_file(rob: &mut Rob, out: &str, name: &str, flags: &str) {
-    let build_dir = &path!(EXAMPLES, BUILD);
-    let link_with_mm_flags: &str = &format!("--extern mm={path}", path = path!(build_dir, "libmm.rlib"));
-    rob.append(&["rustc", DEBUG_FLAGS, flags, THREADS, link_with_mm_flags, "-o",
-                 &path!(build_dir, out),
-                 &path!(EXAMPLES, "mm", &format!("{name}.rs"))]);
-}
-
 // Link to Rakivo's mm: https://github.com/rakivo/mm
 fn build_rakivo_mm(rob: &mut Rob) -> IoResult::<Vec::<Output>> {
     build_file(rob, "libmm.rlib", "mm", LIB_FLAGS);
     build_file(rob, "load_from_binary", &path!("examples", "load_from_binary"), "");
     build_file(rob, "translate_masm", &path!("examples", "translate_masm"), "");
     rob.execute_all_sync()
+}
+
+fn build_file(rob: &mut Rob, out: &str, name: &str, flags: &str) {
+    let build_dir = &path!(EXAMPLES, BUILD);
+    let link_with_mm_flags: &str = &format!("--extern mm={path}", path = path!(build_dir, "libmm.rlib"));
+    let output = if cfg!(windows) {&format!("{}.exe", &path!(build_dir, out))}
+                 else { &path!(build_dir, out) };
+
+    rob.append(&["rustc", DEBUG_FLAGS, flags, THREADS, link_with_mm_flags, "-o",
+               output,
+               &path!(EXAMPLES, "mm", &format!("{name}.rs"))]);
 }
 
 fn test_rakivo_mm(rob: &mut Rob) -> IoResult::<()> {

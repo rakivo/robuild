@@ -20,10 +20,7 @@ jobs:
     runs-on: windows-2019
     steps:
       - uses: actions/checkout@v1
-        # this runs vcvarsall for us, so we get the MSVC toolchain in PATH.
-      - uses: seanmiddleditch/gha-setup-vsdevenv@master
       - name: build
         shell: cmd
-        # this replaces default PowerShell, which can't fail the build
         run: |
           cargo run --example rob
