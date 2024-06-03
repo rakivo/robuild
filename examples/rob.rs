@@ -34,8 +34,8 @@ fn build_rakivo_mm(rob: &mut Rob) -> IoResult::<Vec::<Output>> {
 fn build_file(rob: &mut Rob, out: &str, name: &str, flags: &str) {
     let build_dir = &path!(EXAMPLES, BUILD);
     let link_with_mm_flags: &str = &format!("--extern mm={path}", path = path!(build_dir, "libmm.rlib"));
-    let output = if cfg!(windows) {&format!("{}.exe", &path!(build_dir, out))}
-                 else { &path!(build_dir, out) };
+    let output = &if cfg!(windows) {format!("{}.exe", &path!(build_dir, out))}
+                 else { path!(build_dir, out) };
 
     rob.append(&["rustc", DEBUG_FLAGS, flags, THREADS, link_with_mm_flags, "-o",
                output,
