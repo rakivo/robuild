@@ -28,6 +28,9 @@ pub const DELIM:    &str = if cfg!(windows) {"\\"} else {"/"};
 pub const CMD_ARG:  &str = if cfg!(windows) {"cmd"} else {"sh"};
 pub const CMD_ARG2: &str = if cfg!(windows) {"/C"} else {"-c"};
 
+pub const MOVE_ACP_PTR_SYMBOL: &str = ".n";
+pub const MAP: &str = MOVE_ACP_PTR_SYMBOL;
+
 pub type IoResult<T> = std::io::Result::<T>;
 pub type IoError = std::io::Error;
 
@@ -197,7 +200,8 @@ impl Default for RobCommand {
 #[derive(Debug, Default)]
 pub struct Rob {
     cmd: RobCommand,
-    cp: usize,
+    acp: usize, // append command pointer
+    ecp: usize, // execution command pointer
     echo: bool,
     keepgoing: bool,
     output_stack: VecDeque::<Output>,
@@ -408,13 +412,28 @@ impl Rob {
     /// ```
     /// [CMD] clang++ -o output test/test1/test.cpp
     /// ```
-    #[inline]
-    pub fn append<S>(&mut self, args: &[S]) -> &mut Self
+    pub fn append<S>(&mut self, xs: &[S]) -> &mut Self
     where
-        S: ToString
+        S: ToString + PartialEq::<&'static str>
     {
-        let args = args.into_iter().map(S::to_string).collect::<Vec::<_>>();
-        self.cmd.lines[self.cp].extend(args);
+        // check for the `move_acp_ptr` symbol
+        if matches!(xs.last(), Some(last) if last == &MAP) {
+            let args = xs[0..xs.len() - 1].into_iter().map(S::to_string).collect::<Vec::<_>>();
+            self.cmd.lines[self.acp].extend(args);
+            self.move_acp_ptr();
+        } else {
+            let args = xs.into_iter().map(S::to_string).collect::<Vec::<_>>();
+            self.cmd.lines[self.acp].extend(args);
+        } self
+    }
+
+    /// Performs append and moves append ptr forward
+    pub fn append_mv<S>(&mut self, xs: &[S]) -> &mut Self
+    where
+        S: ToString + PartialEq::<&'static str>
+    {
+        self.append(xs);
+        self.move_acp_ptr();
         self
     }
 
@@ -455,8 +474,8 @@ impl Rob {
     }
 
     #[inline]
-    pub fn move_cmd_ptr(&mut self) -> &mut Self {
-        self.cp += 1;
+    pub fn move_acp_ptr(&mut self) -> &mut Self {
+        self.acp += 1;
         self.cmd.lines.push(Vec::new());
         self
     }
@@ -492,10 +511,10 @@ impl Rob {
     }
 
     pub fn execute(&mut self) -> IoResult::<&mut Self> {
-        println!("{:?}", self.cmd.lines);
         let out = self.execute_sync()?;
-        self.cp += 1;
-        self.cmd.lines.push(Vec::new());
+        if let Some(last) = self.cmd.lines.last_mut() {
+            *last = Vec::new();
+        }
         self.output_stack.push_back(out);
         Ok(self)
     }
@@ -503,8 +522,8 @@ impl Rob {
     /// Returns vector of child which you can turn into vector of the outputs using Rob::wait_for_children.
     pub fn execute_all_sync(&mut self) -> IoResult::<Vec::<Output>> {
         let mut outs = Vec::new();
-//        println!("{:#?}", self.cmd.lines);
-        for line in self.cmd.lines.iter() {
+        for idx in self.ecp..self.cmd.lines.len() {
+            let line = &self.cmd.lines[idx];
             let args = line.join(" ");
             if args.is_empty() { continue }
 
@@ -529,6 +548,7 @@ impl Rob {
                 exit(1);
             }
 
+            self.ecp += 1;
             outs.push(out);
         }
         Ok(outs)
@@ -536,7 +556,7 @@ impl Rob {
 
     #[inline]
     fn get_args(&self) -> Option::<String> {
-        if let Some(args) = self.cmd.lines.get(self.cp) {
+        if let Some(args) = self.cmd.lines.last() {
             if args.is_empty() { None }
             else               { Some(args.join(" ")) }
         } else { None }
@@ -642,12 +662,6 @@ More important TODOs:
     Because you need to have an ability to
     say to the rob, that something need to be
     compiled before something else ykwim.
-
-    (#2): Change the command ptr system.
-    Because you can't combine `execute single line`, and `execute all`
-    functions, everything breakes because of current cmd-ptr system,
-    maybe we need use VecDeque instead of Vec and pop lines,
-    that were executed or something like that.
 
 Less important TODOs:
     README;

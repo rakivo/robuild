@@ -23,8 +23,7 @@ fn main() -> IoResult::<()> {
 
 fn build_file(rob: &mut Rob, out: &str, name: &str, flags: &str) {
     rob.append(&["rustc", DEBUG_FLAGS, flags, THREAD_FLAGS, LINK_WITH_MM_FLAGS, "-o"])
-       .append(&[&path!("build", out), &path!("mm", &format!("{name}.rs"))])
-       .move_cmd_ptr();
+       .append_mv(&[&path!("build", out), &path!("mm", &format!("{name}.rs"))]);
 }
 
 // Link to Rakivo's mm: https://github.com/rakivo/mm
@@ -43,8 +42,7 @@ fn test_rakivo_mm(rob: &mut Rob) -> IoResult::<()> {
     let expected_path = path!("mm", "load_from_binary.expected");
 
     rob.append(&[&path!("build", "translate_masm")])
-       .append(&[&path!("mm", "fib.masm"), &path!("build", "fibm")])
-       .move_cmd_ptr()
+       .append_mv(&[&path!("mm", "fib.masm"), &path!("build", "fibm")])
        .append(&[&path!("build", "load_from_binary")])
        .append(&[&format!("{p1} > {p2}", p1 = &path!("build", "fibm"), p2 = &output_path)])
        .execute_all_sync()?;
