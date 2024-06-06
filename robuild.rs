@@ -1,74 +1,5 @@
-//! # Robuild (rob)
-//! # For example, this is how I build examples for my [virtual machine](https://github.com/rakivo/mm) with the [robuild](https://github.com/rakivo/robuild)
-//! ```
-//! use robuild::*;
-//! use std::process::Output;
-//!
-//! const THREADS: &str = "-Z threads=10";
-//! const LIB_FLAGS: &str = "--crate-type=rlib";
-//! const DEBUG_FLAGS: &str = "-g -C \"opt-level=0\"";
-//!
-//! const BUILD: &str = "build";
-//! const EXAMPLES: &str = "examples";
-//!
-//! fn main() -> IoResult::<()> {
-//!     go_rebuild_yourself!(?);
-//!
-//!     Rob::mkdir(path!("examples", "build")).unwrap();
-//!
-//!     let mut rob = Rob::new();
-//!     build_rakivo_mm(&mut rob)?;
-//!     test_rakivo_mm(&mut rob)?;
-//!
-//!     Ok(())
-//! }
-//!
-//! fn build_file(rob: &mut Rob, out: &str, name: &str, flags: &str) {
-//!     let build_dir = path!(EXAMPLES, BUILD);
-//!     let link_with_mm_flags: &str = &format!("--extern mm={path}", path = format!("{build_dir}/libmm.rlib"));
-//!     rob.append(&["rustc", DEBUG_FLAGS, flags, THREADS, link_with_mm_flags, "-o",
-//!                  &format!("{build_dir}/{out}"),
-//!                  &path!(EXAMPLES, "mm", &format!("{name}.rs"))]);
-//! }
-//!
-//! // Link to Rakivo's mm: https://github.com/rakivo/mm
-//! fn build_rakivo_mm(rob: &mut Rob) -> IoResult::<Vec::<Output>> {
-//!     build_file(rob, "libmm.rlib", "mm", LIB_FLAGS);
-//!     build_file(rob, "load_from_binary", &path!("examples", "load_from_binary"), "");
-//!     build_file(rob, "translate_masm", &path!("examples", "translate_masm"), "");
-//!     rob.execute_all_sync()
-//! }
-//!
-//! fn test_rakivo_mm(rob: &mut Rob) -> IoResult::<()> {
-//!     use std::fs::read_to_string;
-//!
-//!     let build_dir = path!(EXAMPLES, BUILD);
-//!     let output_path = format!("{build_dir}/fibm.out");
-//!     let expected_path = path!(EXAMPLES, "mm", "load_from_binary.expected");
-//!
-//!     rob.append(&[&format!("{build_dir}/translate_masm"),
-//!                  &path!(EXAMPLES, "mm", "fib.masm"),
-//!                  &format!("{build_dir}/fibm")])
-//!        .append(&[&format!("{build_dir}/load_from_binary"),
-//!                   &format!("{p1} > {p2}", p1 = &format!("{build_dir}/fibm"), p2 = &output_path)])
-//!        .execute_all_sync()?;
-//!
-//!     let output_string = read_to_string(&output_path)?;
-//!     let expected_string = read_to_string(&expected_path)?;
-//!     if output_string.trim() != expected_string.trim() {
-//!         log!(PANIC, "Output of {output_path} doesn't equal to the expected one: {expected_path}");
-//!     } else {
-//!         log!(INFO, "TEST: `translate_masm`: OK");
-//!     }
-//!
-//!     Ok(())
-//! }
-//! ```
-//! All of the `execute`-like functions moving command-pointer forward,
-//! if you wanna move the command-pointer manually, you can call the
-//! `move_cmd_ptr` function which is especially implemented for `execute_all_sync`
-//! and `execute_all_async` functions.
 use std::{
+    env,
     io::ErrorKind,
     time::SystemTime,
     default::Default,
@@ -84,17 +15,17 @@ pub const C_COMPILER: &str = if cfg!(feature = "gcc")     {"gcc"}
                         else if cfg!(feature = "mingw32") {"x86_64-w64-mingw32-gcc"}
                         else if cfg!(windows)             {"cl.exe"}
                         else                              {"cc"};
-pub const CC: &str = C_COMPILER;
 
 pub const CXX_COMPILER: &str = if cfg!(feature = "gxx")     {"g++"}
                           else if cfg!(feature = "clangxx") {"clang++"}
                           else if cfg!(feature = "mingw32") {"x86_64-w64-mingw32-g++"}
                           else if cfg!(windows)             {"cl.exe"}
                           else                              {"c++"};
-pub const CXXC: &str = CXX_COMPILER;
 
-pub const DELIM: &str = if cfg!(windows) {"\\"} else {"/"};
-pub const CMD_ARG: &str = if cfg!(windows) {"cmd"} else {"sh"};
+pub const CC:       &str = C_COMPILER;
+pub const CXXC:     &str = CXX_COMPILER;
+pub const DELIM:    &str = if cfg!(windows) {"\\"} else {"/"};
+pub const CMD_ARG:  &str = if cfg!(windows) {"cmd"} else {"sh"};
 pub const CMD_ARG2: &str = if cfg!(windows) {"/C"} else {"-c"};
 
 pub type IoResult<T> = std::io::Result::<T>;
@@ -107,13 +38,11 @@ pub type IoError = std::io::Error;
 macro_rules! go_rebuild_yourself {
     () => {{
         let source_path = file!();
-        let args = std::env::args().collect::<Vec::<_>>();
-        Rob::go_rebuild_yourself(&args, &source_path).unwrap();
+        Rob::go_rebuild_yourself(&source_path).unwrap();
     }};
     (?) => {{
         let source_path = file!();
-        let args = std::env::args().collect::<Vec::<_>>();
-        Rob::go_rebuild_yourself(&args, &source_path)?;
+        Rob::go_rebuild_yourself(&source_path)?;
     }}
 }
 
@@ -187,57 +116,6 @@ macro_rules! colored {
     (br.$str: expr) => { format!("\x1b[31m{}\x1b[0m", $str) };
 }
 
-macro_rules! rob_gettable {
-    ($name1: tt, $name2: tt, $name3: tt, $stack: tt, $type: ty) => {
-        /// Function for receiving outputs of the commands. For instance:
-        /// ```
-        /// let mut rob = Rob::new();
-        ///
-        /// rob
-        ///     .append(&["echo hello"])
-        ///     .execute()?
-        ///     .append(&["clang", "-o build/output", "./test/main.c"])
-        ///     .execute()?
-        ///     .append(&["clang++", "-o build/outputpp", "./test/main.cpp"])
-        ///     .execute()?
-        ///     .append(&["echo byebye"])
-        ///     .execute()?;
-        ///
-        /// while let Some(out) = rob.output() {
-        ///     println!("{out:?}");
-        /// }
-        /// ```
-        /// Will print:
-        /// ```
-        /// [CMD] echo hello
-        /// [INFO] hello
-        /// [CMD] clang -o build/output ./test/main.c
-        /// [CMD] clang++ -o build/outputpp ./test/main.cpp
-        /// [CMD] echo byebye
-        /// [INFO] byebye
-        /// Output { status: ExitStatus(unix_wait_status(0)), stdout: "hello\n", stderr: "" }
-        /// Output { status: ExitStatus(unix_wait_status(0)), stdout: "", stderr: "" }
-        /// Output { status: ExitStatus(unix_wait_status(0)), stdout: "", stderr: "" }
-        /// Output { status: ExitStatus(unix_wait_status(0)), stdout: "byebye\n", stderr: "" }
-        /// ```
-        /// As you can see, you receiving outputs in the reversed order, i think this is the best way of doing that.
-        #[inline]
-        pub fn $name1(&mut self) -> Option::<$type> {
-            self.$stack.pop_front()
-        }
-
-        #[inline]
-        pub fn $name2(&self) -> Vec::<&$type> {
-            self.$stack.iter().collect()
-        }
-
-        #[inline]
-        pub fn $name3(self) -> Vec::<$type> {
-            self.$stack.into_iter().collect()
-        }
-    };
-}
-
 /// Structure for convenient work with directories.
 #[derive(Debug)]
 pub struct Dir {
@@ -302,9 +180,17 @@ impl Display for LogLevel {
 }
 
 /// Structure for executing commands (actually just keeping them, but it's just for now)
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct RobCommand {
     lines: Vec::<Vec::<String>>,
+}
+
+impl Default for RobCommand {
+    fn default() -> Self {
+        RobCommand {
+            lines: vec![Vec::new()]
+        }
+    }
 }
 
 /// The main `Rob` structure.
@@ -314,8 +200,7 @@ pub struct Rob {
     cp: usize,
     echo: bool,
     keepgoing: bool,
-    child_stack: VecDeque::<Child>,
-    output_stack: VecDeque::<Output>
+    output_stack: VecDeque::<Output>,
 }
 
 impl Rob {
@@ -366,7 +251,8 @@ impl Rob {
     ///
     /// The modification is detected by comparing the last modified times of the executable
     /// and its source code. The same way the make utility usually does it.
-    pub fn go_rebuild_yourself(args: &Vec::<String>, source_path: &str) -> IoResult::<()> {
+    pub fn go_rebuild_yourself(source_path: &str) -> IoResult::<()> {
+        let args = env::args().collect::<Vec::<_>>();
         assert!(args.len() >= 1);
         let binary_pathbuf = std::env::current_exe()?;
         let binary_path = binary_pathbuf.to_str().to_owned().unwrap();
@@ -398,7 +284,7 @@ impl Rob {
             }
 
             match Rob::new()
-                .append(args)
+                .append(&args)
                 .execute_sync()
             {
                 Ok(_) => {
@@ -525,11 +411,10 @@ impl Rob {
     #[inline]
     pub fn append<S>(&mut self, args: &[S]) -> &mut Self
     where
-        S: AsRef<str>
+        S: ToString
     {
-        // The unwrap can possibly fail ONLY if cmd.lines (std::vec::Vec) has overflowed
-        let cmd = args.iter().map(|s| s.as_ref().to_string()).collect::<Vec<_>>();
-        self.cmd.lines.push(cmd);
+        let args = args.into_iter().map(S::to_string).collect::<Vec::<_>>();
+        self.cmd.lines[self.cp].extend(args);
         self
     }
 
@@ -572,48 +457,18 @@ impl Rob {
     #[inline]
     pub fn move_cmd_ptr(&mut self) -> &mut Self {
         self.cp += 1;
+        self.cmd.lines.push(Vec::new());
         self
     }
 
-    rob_gettable!(output, outputs_refs, outputs, output_stack, Output);
-    rob_gettable!(child, children_refs, children, child_stack, Child);
-
-    /// Blocking operation.
-    ///
-    /// It is a second version of the `Rob::execute_sync` function, especially
-    /// to use in one line. For instance:
-    /// ```
-    /// Rob::new()
-    ///     .append(&["clang", "-o build/output", "./test/main.c"])
-    ///     .execute()?
-    ///     .append(&["clang++", "-o build/outputpp", "./test/main.cpp"])
-    ///     .execute()?;
-    /// ```
-    /// After executing command, its output will be pushed into the output_stack.
-    /// If you need, you can get the output via calling the `Rob::get_output` function.
-    pub fn execute(&mut self) -> IoResult::<&mut Self> {
-        let out = self.execute_sync_helper()?;
-        println!("{out:?}");
-        self.output_stack.push_back(out);
-        Ok(self)
-    }
-
-    pub fn execute_and_get_output(&mut self) -> IoResult::<Output> {
-        let out = self.execute_sync_helper()?;
-        Ok(out)
-    }
-
-    fn execute_sync_helper(&mut self) -> IoResult::<Output> {
+    pub fn execute_sync(&mut self) -> IoResult::<Output> {
         let Some(args) = self.get_args()
         else {
             let err = IoError::new(ErrorKind::Other, "No arguments to process");
             return Err(err)
         };
 
-        if self.echo {
-            log!(CMD, "{args}");
-        }
-
+        if self.echo { log!(CMD, "{args}"); }
         let mut cmd = Command::new(CMD_ARG);
         cmd.arg(CMD_ARG2).arg(args);
 
@@ -633,17 +488,25 @@ impl Rob {
             log!(ERROR, "Compilation exited abnormally with code: {code}");
             exit(1);
         }
-
-        self.cp += 1;
-        Rob::render_output(&out, &self.echo);
         Ok(out)
+    }
+
+    pub fn execute(&mut self) -> IoResult::<&mut Self> {
+        println!("{:?}", self.cmd.lines);
+        let out = self.execute_sync()?;
+        self.cp += 1;
+        self.cmd.lines.push(Vec::new());
+        self.output_stack.push_back(out);
+        Ok(self)
     }
 
     /// Returns vector of child which you can turn into vector of the outputs using Rob::wait_for_children.
     pub fn execute_all_sync(&mut self) -> IoResult::<Vec::<Output>> {
         let mut outs = Vec::new();
+//        println!("{:#?}", self.cmd.lines);
         for line in self.cmd.lines.iter() {
             let args = line.join(" ");
+            if args.is_empty() { continue }
 
             if self.echo { log!(CMD, "{args}"); }
             let mut cmd = Command::new(CMD_ARG);
@@ -674,40 +537,56 @@ impl Rob {
     #[inline]
     fn get_args(&self) -> Option::<String> {
         if let Some(args) = self.cmd.lines.get(self.cp) {
-            Some(args.join(" "))
+            if args.is_empty() { None }
+            else               { Some(args.join(" ")) }
         } else { None }
     }
 
-    /// Blocking operation.
+    /// Function for receiving outputs of the commands. For instance:
+    /// ```
+    /// let mut rob = Rob::new();
     ///
-    /// Simply creates `Command` for each line in self.lines and executes them.
-    /// More about that: `https://doc.rust-lang.org/std/process/struct.Command.html`
-    pub fn execute_sync(&mut self) -> IoResult::<Output> {
-        let out = self.execute_sync_helper()?;
-        self.cmd.lines.push(Vec::new());
-        Ok(out)
+    /// rob
+    ///     .append(&["echo hello"])
+    ///     .execute()?
+    ///     .append(&["clang", "-o build/output", "./test/main.c"])
+    ///     .execute()?
+    ///     .append(&["clang++", "-o build/outputpp", "./test/main.cpp"])
+    ///     .execute()?
+    ///     .append(&["echo byebye"])
+    ///     .execute()?;
+    ///
+    /// while let Some(out) = rob.output() {
+    ///     println!("{out:?}");
+    /// }
+    /// ```
+    /// Will print:
+    /// ```
+    /// [CMD] echo hello
+    /// [INFO] hello
+    /// [CMD] clang -o build/output ./test/main.c
+    /// [CMD] clang++ -o build/outputpp ./test/main.cpp
+    /// [CMD] echo byebye
+    /// [INFO] byebye
+    /// Output { status: ExitStatus(unix_wait_status(0)), stdout: "hello\n", stderr: "" }
+    /// Output { status: ExitStatus(unix_wait_status(0)), stdout: "", stderr: "" }
+    /// Output { status: ExitStatus(unix_wait_status(0)), stdout: "", stderr: "" }
+    /// Output { status: ExitStatus(unix_wait_status(0)), stdout: "byebye\n", stderr: "" }
+    /// ```
+    /// As you can see, you receiving outputs in the reversed order, i think this is the best way of doing that.
+    #[inline]
+    pub fn output(&mut self) -> Option::<Output> {
+        self.output_stack.pop_front()
     }
 
-    fn execute_async_helper(&mut self) -> IoResult::<Child> {
-        let Some(args) = self.get_args()
-        else {
-            let err = IoError::new(ErrorKind::Other, "No arguments to process");
-            return Err(err)
-        };
+    #[inline]
+    pub fn outputs_refs(&self) -> VecDeque::<&Output> {
+        self.output_stack.iter().collect()
+    }
 
-        if self.echo {
-            log!(CMD, "{args}");
-        }
-
-        let child = Command::new(CMD_ARG)
-            .arg(CMD_ARG2)
-            .arg(args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-
-        self.cp += 1;
-        Ok(child)
+    #[inline]
+    pub fn outputs(self) -> VecDeque::<Output> {
+        self.output_stack.into_iter().collect()
     }
 
     /// Returns vector of child which you can turn into vector of the outputs using Rob::wait_for_children.
@@ -715,6 +594,7 @@ impl Rob {
         let mut children = Vec::new();
         for line in self.cmd.lines.iter() {
             let args = line.join(" ");
+            if args.is_empty() { continue }
 
             if self.echo { log!(CMD, "{args}"); }
             let mut cmd = Command::new(CMD_ARG);
@@ -739,25 +619,6 @@ impl Rob {
         Ok(())
     }
 
-    /// Non-Blocking operation.
-    ///
-    /// It is a second version of the `Rob::execute_async_child` function, especially
-    /// to use in one line. For instance:
-    /// ```
-    /// Rob::new()
-    ///     .append(&["clang", "-o build/output", "./test/main.c"])
-    ///     .execute_async()?
-    ///     .append(&["clang++", "-o build/outputpp", "./test/main.cpp"])
-    ///     .execute_async()?;
-    /// ```
-    /// After executing command, its child process will be pushed into the child_stack.
-    /// If you need, you can get the output via calling the `Rob::get_child` function.
-    pub fn execute_async(&mut self) -> IoResult::<&mut Self> {
-        let child = self.execute_async_helper()?;
-        self.child_stack.push_back(child);
-        Ok(self)
-    }
-
     /// Blocks the main thread and waits for all of the children.
     pub fn wait_for_children_deq(mut children: VecDeque::<Child>, echo: &bool) -> IoResult::<Vec::<Output>> {
         let mut ret = Vec::new();
@@ -766,12 +627,6 @@ impl Rob {
             Rob::render_output(&out, echo);
             ret.push(out);
         } Ok(ret)
-    }
-
-    /// ! MOVES SELF !
-    /// Blocks the main thread and waits for all of the children.
-    pub fn wait_for_children(self) -> IoResult::<Vec::<Output>> {
-        Rob::wait_for_children_deq(self.child_stack, &self.echo)
     }
 
     /// Blocks the main thread and waits for the child.
@@ -789,8 +644,8 @@ More important TODOs:
     compiled before something else ykwim.
 
     (#2): Change the command ptr system.
-    Because you can't combine execute single line function,
-    and execute all functions, everything breakes because of that system,
+    Because you can't combine `execute single line`, and `execute all`
+    functions, everything breakes because of current cmd-ptr system,
     maybe we need use VecDeque instead of Vec and pop lines,
     that were executed or something like that.
 
