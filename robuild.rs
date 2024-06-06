@@ -806,11 +806,6 @@ impl Rob {
 
 /*
 More important TODOs:
-    (#1): Introduce job system.
-    Because you need to have an ability to
-    say to the rob, that something need to be
-    compiled before something else ykwim.
-
     (#2): Parse env::args and do something with them
 
     (#3): Rob clean
