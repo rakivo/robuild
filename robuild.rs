@@ -64,15 +64,17 @@ macro_rules! go_rebuild_yourself {
 macro_rules! log {
     ($log_level: tt, $($args: expr), *) => {{
         use LogLevel::*;
-        let out = format!($($args), *);
-        match $log_level {
-            PANIC => {
-                let out = format!("{lvl} {f}:{l}:{c}: {out}",
-                                  lvl = LogLevel::$log_level, f = file!(),
-                                  l = line!(), c = column!());
-                Rob::panic(&out)
-            }
-            _ => Rob::log($log_level, &out, file!(), line!(), column!())
+        let lvl = $log_level;
+        let out_ = format!($($args), *);
+        let out = format!("{lvl} {f}:{l}:{c}: {out_}",
+                          lvl = LogLevel::$log_level, f = file!(),
+                          l = line!(), c = column!());
+        match lvl {
+            CMD   => println!("{lvl} {out_}"),
+            INFO  => println!("{lvl} {out_}"),
+            WARN  => println!("{lvl} {out}", lvl = colored!(y."[WARN]")),
+            ERROR => println!("{lvl} {out}", lvl = colored!(r."[ERROR]")),
+            PANIC => unreachable!()
         }
     }}
 }
@@ -113,6 +115,7 @@ macro_rules! mkdirs {
     }}
 }
 
+#[macro_export]
 macro_rules! colored {
     (r.$str: expr)  => { format!("\x1b[91m{}\x1b[0m", $str) };
     (y.$str: expr)  => { format!("\x1b[93m{}\x1b[0m", $str) };
@@ -183,36 +186,390 @@ impl Display for LogLevel {
 }
 
 /// Structure for executing commands (actually just keeping them, but it's just for now)
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RobCommand {
     lines: Vec::<Vec::<String>>,
+    acp: usize, // append command pointer
+    ecp: usize, // execution command pointer
+    cfg: Config,
+    output_stack: VecDeque::<Output>,
 }
 
 impl Default for RobCommand {
     fn default() -> Self {
-        RobCommand {
-            lines: vec![Vec::new()]
+        Self {
+            lines: vec![Vec::new()],
+            acp: 0, ecp: 0,
+            cfg: Config::default(),
+            output_stack: VecDeque::new()
         }
+    }
+}
+
+impl RobCommand {
+    pub fn new() -> RobCommand {
+        RobCommand::default()
+    }
+
+    /// Appends arguments to the last line in cmd,
+    /// ```
+    /// let p = pathbuf!["dummy", "rakivo", "dummy.cpp"];
+    /// Rob::new()
+    ///     .append(&["clang++", "-o", "output", p.to_str().unwrap()])
+    ///     .execute()
+    /// ```
+    /// It Outputs:
+    /// ```
+    /// [CMD] clang++ -o output test/test1/test.cpp
+    /// ```
+    pub fn append<S>(&mut self, xs: &[S]) -> &mut Self
+    where
+        S: ToString + PartialEq::<&'static str>
+    {
+        // check for the `move_acp_ptr` symbol
+        if matches!(xs.last(), Some(last) if last == &MAP) {
+            let args = xs[0..xs.len() - 1].into_iter().map(S::to_string).collect::<Vec::<_>>();
+            self.lines[self.acp].extend(args);
+            self.move_acp_ptr();
+        } else {
+            let args = xs.into_iter().map(S::to_string).collect::<Vec::<_>>();
+            self.lines[self.acp].extend(args);
+        } self
+    }
+
+    /// Performs append and moves append ptr forward
+    pub fn append_mv<S>(&mut self, xs: &[S]) -> &mut Self
+    where
+        S: ToString + PartialEq::<&'static str>
+    {
+        self.append(xs);
+        self.move_acp_ptr();
+        self
+    }
+
+    #[inline]
+    pub fn move_acp_ptr(&mut self) -> &mut Self {
+        self.acp += 1;
+        self.lines.push(Vec::new());
+        self
+    }
+
+    pub fn execute(&mut self) -> IoResult::<&mut Self> {
+        let out = self.execute_sync()?;
+        if let Some(last) = self.lines.last_mut() {
+            *last = Vec::new();
+        }
+        self.output_stack.push_back(out);
+        Ok(self)
+    }
+
+    pub fn execute_sync(&mut self) -> IoResult::<Output> {
+        let Some(args) = self.get_args()
+        else {
+            let err = IoError::new(ErrorKind::Other, "No arguments to process");
+            return Err(err)
+        };
+
+        if self.cfg.echo { log!(CMD, "{args}"); }
+        let mut cmd = Command::new(CMD_ARG);
+        cmd.arg(CMD_ARG2).arg(args);
+
+        if !self.cfg.echo {
+            cmd.stdout(Stdio::null())
+                .stderr(Stdio::null());
+        }
+
+        let out = cmd.output()?;
+
+        if !self.cfg.keepgoing && !out.status.success() {
+            let code = out.status.code()
+                .expect("Process terminated by signal");
+
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            log!(ERROR, "{stderr}");
+            log!(ERROR, "Compilation exited abnormally with code: {code}");
+            exit(1);
+        }
+        Ok(out)
+    }
+
+    /// Returns vector of child which you can turn into vector of the outputs using Rob::wait_for_children.
+    pub fn execute_all_sync(&mut self) -> IoResult::<Vec::<Output>> {
+        let mut outs = Vec::new();
+        for idx in self.ecp..self.lines.len() {
+            let line = &self.lines[idx];
+            let args = line.join(" ");
+            if args.is_empty() { continue }
+
+            if self.cfg.echo { log!(CMD, "{args}"); }
+            let mut cmd = Command::new(CMD_ARG);
+            cmd.arg(CMD_ARG2).arg(args);
+
+            if !self.cfg.echo {
+                cmd.stdout(Stdio::null())
+                   .stderr(Stdio::null());
+            }
+
+            let out = cmd.output()?;
+
+            if !self.cfg.keepgoing && !out.status.success() {
+                let code = out.status.code()
+                    .expect("Process terminated by signal");
+
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                log!(ERROR, "{stderr}");
+                log!(ERROR, "Compilation exited abnormally with code: {code}");
+                exit(1);
+            }
+
+            self.ecp += 1;
+            outs.push(out);
+        }
+        Ok(outs)
+    }
+
+    #[inline]
+    fn get_args(&self) -> Option::<String> {
+        if let Some(args) = self.lines.last() {
+            if args.is_empty() { None }
+            else               { Some(args.join(" ")) }
+        } else { None }
+    }
+
+    /// Function for receiving outputs of the commands. For instance:
+    /// ```
+    /// let mut rob = Rob::new();
+    ///
+    /// rob
+    ///     .append(&["echo hello"])
+    ///     .execute()?
+    ///     .append(&["clang", "-o build/output", "./test/main.c"])
+    ///     .execute()?
+    ///     .append(&["clang++", "-o build/outputpp", "./test/main.cpp"])
+    ///     .execute()?
+    ///     .append(&["echo byebye"])
+    ///     .execute()?;
+    ///
+    /// while let Some(out) = rob.output() {
+    ///     println!("{out:?}");
+    /// }
+    /// ```
+    /// Will print:
+    /// ```
+    /// [CMD] echo hello
+    /// [INFO] hello
+    /// [CMD] clang -o build/output ./test/main.c
+    /// [CMD] clang++ -o build/outputpp ./test/main.cpp
+    /// [CMD] echo byebye
+    /// [INFO] byebye
+    /// Output { status: ExitStatus(unix_wait_status(0)), stdout: "hello\n", stderr: "" }
+    /// Output { status: ExitStatus(unix_wait_status(0)), stdout: "", stderr: "" }
+    /// Output { status: ExitStatus(unix_wait_status(0)), stdout: "", stderr: "" }
+    /// Output { status: ExitStatus(unix_wait_status(0)), stdout: "byebye\n", stderr: "" }
+    /// ```
+    /// As you can see, you receiving outputs in the reversed order, i think this is the best way of doing that.
+    #[inline]
+    pub fn output(&mut self) -> Option::<Output> {
+        self.output_stack.pop_front()
+    }
+
+    #[inline]
+    pub fn outputs_refs(&self) -> VecDeque::<&Output> {
+        self.output_stack.iter().collect()
+    }
+
+    #[inline]
+    pub fn outputs(self) -> VecDeque::<Output> {
+        self.output_stack.into_iter().collect()
+    }
+
+    /// Returns vector of child which you can turn into vector of the outputs using Rob::wait_for_children.
+    pub fn execute_all_async(&mut self) -> IoResult::<Vec::<Child>> {
+        let mut children = Vec::new();
+        for idx in self.ecp..self.lines.len() {
+            let line = &self.lines[idx];
+            let args = line.join(" ");
+            if args.is_empty() { continue }
+
+            if self.cfg.echo { log!(CMD, "{args}"); }
+            let mut cmd = Command::new(CMD_ARG);
+            cmd.arg(CMD_ARG2).arg(&args);
+
+            let child = Command::new(CMD_ARG)
+                .arg(CMD_ARG2)
+                .arg(args)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()?;
+
+            self.ecp += 1;
+            children.push(child);
+        }
+        Ok(children)
+    }
+
+    fn format_out(out: &str) -> &str {
+        if out.ends_with('\n') {
+            &out[0..out.len() - 1]
+        } else {
+            &out[0..]
+        }
+    }
+
+    fn render_output(out: &Output, cfg: &Config) {
+        if out.status.success() {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            if !stdout.is_empty() && cfg.echo {
+                let formatted = Self::format_out(&stdout);
+                log!(INFO, "{formatted}");
+            }
+        } else {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            if !stderr.is_empty() && cfg.echo {
+                let formatted = Self::format_out(&stderr);
+                log!(ERROR, "{formatted}");
+                if !cfg.keepgoing {
+                    let code = out.status.code().expect("Process terminated by signal");
+                    log!(ERROR, "Compilation exited abnormally with code: {code}");
+                    exit(1);
+                }
+            }
+        }
+    }
+
+    /// Returns vector of child which you can turn into vector of the outputs using Rob::wait_for_children.
+    pub fn execute_all_async_and_wait(&mut self) -> IoResult::<Vec::<Output>> {
+        let children = self.execute_all_async()?;
+        Self::wait_for_children_deq(children.into(), &self.cfg)
+    }
+
+    /// Blocks the main thread and waits for all of the children.
+    pub fn wait_for_children_deq(mut children: VecDeque::<Child>, cfg: &Config) -> IoResult::<Vec::<Output>> {
+        let mut ret = Vec::new();
+        while let Some(child) = children.pop_front() {
+            let out = Self::wait_for_child(child)?;
+            Self::render_output(&out, cfg);
+            ret.push(out);
+        } Ok(ret)
+    }
+
+    /// Blocks the main thread and waits for the child.
+    #[inline]
+    pub fn wait_for_child(child: Child) -> IoResult::<Output> {
+        child.wait_with_output()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Config {
+    echo: bool,
+    keepgoing: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self{echo: true, keepgoing: false}
+    }
+}
+
+impl Config {
+    #[inline]
+    pub fn echo(&mut self, echo: bool) -> &mut Self {
+        self.echo = echo;
+        self
+    }
+
+    #[inline]
+    pub fn keepgoing(&mut self, keepgoing: bool) -> &mut Self {
+        self.keepgoing = keepgoing;
+        self
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Job {
+    target: Option::<String>,
+    deps: Vec::<String>,
+    cmd: RobCommand,
+}
+
+impl Job {
+    // TODO: Abstract away `&str`s
+    pub fn new(target: Option::<String>, deps: Vec::<&str>, cmd: RobCommand) -> Job {
+        let deps = deps.iter().map(ToString::to_string).collect::<Vec::<_>>();
+        Job{target, deps, cmd}
+    }
+
+    #[inline]
+    pub fn up_to_date(&self) -> IoResult::<bool> {
+        if let Some(target) = &self.target {
+            Rob::needs_rebuild_many(&target, &self.deps)
+        } else { Ok(true) }
+    }
+
+    fn execute(&mut self, sync: bool) -> IoResult::<Vec::<Output>> {
+        if self.up_to_date()? {
+            if sync {
+                self.cmd.execute_all_sync()
+            } else {
+                self.cmd.execute_all_async_and_wait()
+            }
+        } else {
+            if let Some(target) = &self.target {
+                log!(INFO, "'{}' is up to date", target);
+            }
+            Ok(Vec::new())
+        }
+    }
+
+    pub fn execute_async(&mut self) -> IoResult::<Vec::<Output>> {
+        self.execute(false)
+    }
+
+    #[inline]
+    pub fn execute_sync(&mut self) -> IoResult::<Vec::<Output>> {
+        self.execute(true)
     }
 }
 
 /// The main `Rob` structure.
 #[derive(Debug, Default)]
 pub struct Rob {
+    cfg: Config,
     cmd: RobCommand,
-    acp: usize, // append command pointer
-    ecp: usize, // execution command pointer
-    echo: bool,
-    keepgoing: bool,
-    output_stack: VecDeque::<Output>,
+    jobs: Vec::<Job>,
 }
 
 impl Rob {
     pub fn new() -> Rob {
-        Rob {
-            echo: true,
-            ..Rob::default()
-        }
+        Rob::default()
+    }
+
+    pub fn execute_jobs(&mut self, sync: bool) -> IoResult::<Vec::<Vec::<Output>>> {
+        let mut outss = Vec::new();
+        for job in self.jobs.iter_mut() {
+            let outs = if sync {
+                job.execute_sync()
+            } else {
+                job.execute_async()
+            }?;
+            outss.push(outs);
+        } Ok(outss)
+    }
+
+    #[inline]
+    pub fn execute_jobs_sync(&mut self) -> IoResult::<Vec::<Vec::<Output>>> {
+        self.execute_jobs(true)
+    }
+
+    #[inline]
+    pub fn execute_jobs_async(&mut self) -> IoResult::<Vec::<Vec::<Output>>> {
+        self.execute_jobs(false)
+    }
+
+    pub fn append_job(&mut self, job: Job) -> &mut Self {
+        self.jobs.push(job);
+        self
     }
 
     /// Checks if src file needs rebuild
@@ -223,7 +580,7 @@ impl Rob {
         Ok(src_mod_time > bin_mod_time)
     }
 
-    pub fn needs_rebuild_many(bin: &str, srcs: &Vec::<&str>) -> IoResult::<bool> {
+    pub fn needs_rebuild_many(bin: &str, srcs: &Vec::<String>) -> IoResult::<bool> {
         if !Rob::path_exists(bin) { return Ok(true) }
 
         let bin_mod_time = Rob::get_last_modification_time(bin)?;
@@ -292,12 +649,12 @@ impl Rob {
                 .execute_sync()
             {
                 Ok(_) => {
-                    log!(INFO, "REMOVING: {old_bin_path}");
+                    log!(INFO, "Removing: {old_bin_path}");
                     Rob::rm_if_exists(old_bin_path);
                     exit(0);
                 }
                 Err(err) => {
-                    log!(ERROR, "FAILED TO RESTART ROB FROM FILE: {binary_path}: {err}");
+                    log!(ERROR, "Failed to restart rob from file: {binary_path}: {err}");
                     exit(1);
                 }
             }
@@ -383,276 +740,67 @@ impl Rob {
         panic!("{out}", out = out.to_owned())
     }
 
-    pub fn log(lvl: LogLevel, out: &str, f: &str, l: u32, c: u32) {
-        use self::LogLevel::*;
-        let out_with_info = format!("{f}:{l}:{c}: {out}");
-        match lvl {
-            CMD   => println!("{lvl} {out}"),
-            INFO  => println!("{lvl} {out}"),
-            WARN  => println!("{lvl} {out_with_info}", lvl = colored!(y."[WARN]")),
-            ERROR => println!("{lvl} {out_with_info}", lvl = colored!(r."[ERROR]")),
-            PANIC => unreachable!()
-        }
-    }
-
     /// Takes path and returns it without the file extension
     #[inline]
     pub fn noext(p: &str) -> String {
         p.chars().take_while(|x| *x != '.').collect()
     }
 
-    /// Appends arguments to the last line in cmd.lines,
-    /// ```
-    /// let p = pathbuf!["dummy", "rakivo", "dummy.cpp"];
-    /// Rob::new()
-    ///     .append(&["clang++", "-o", "output", p.to_str().unwrap()])
-    ///     .execute()
-    /// ```
-    /// It Outputs:
-    /// ```
-    /// [CMD] clang++ -o output test/test1/test.cpp
-    /// ```
-    pub fn append<S>(&mut self, xs: &[S]) -> &mut Self
-    where
-        S: ToString + PartialEq::<&'static str>
-    {
-        // check for the `move_acp_ptr` symbol
-        if matches!(xs.last(), Some(last) if last == &MAP) {
-            let args = xs[0..xs.len() - 1].into_iter().map(S::to_string).collect::<Vec::<_>>();
-            self.cmd.lines[self.acp].extend(args);
-            self.move_acp_ptr();
-        } else {
-            let args = xs.into_iter().map(S::to_string).collect::<Vec::<_>>();
-            self.cmd.lines[self.acp].extend(args);
-        } self
-    }
-
-    /// Performs append and moves append ptr forward
-    pub fn append_mv<S>(&mut self, xs: &[S]) -> &mut Self
-    where
-        S: ToString + PartialEq::<&'static str>
-    {
-        self.append(xs);
-        self.move_acp_ptr();
-        self
-    }
-
-    fn format_out(out: &str) -> &str {
-        if out.ends_with('\n') {
-            &out[0..out.len() - 1]
-        } else {
-            out
-        }
-    }
-
-    fn render_output(out: &Output, echo: &bool) {
-        if out.status.success() {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            if !stdout.is_empty() && *echo {
-                let formatted = Rob::format_out(&stdout);
-                log!(INFO, "{formatted}");
-            }
-        } else {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            if !stderr.is_empty() && *echo {
-                let formatted = Rob::format_out(&stderr);
-                log!(ERROR, "{formatted}");
-            }
-        }
-    }
-
     #[inline]
     pub fn echo(&mut self, echo: bool) -> &mut Self {
-        self.echo = echo;
+        self.cfg.echo(echo);
         self
     }
 
     #[inline]
     pub fn keepgoing(&mut self, keepgoing: bool) -> &mut Self {
-        self.keepgoing = keepgoing;
+        self.cfg.keepgoing(keepgoing);
         self
     }
 
-    #[inline]
-    pub fn move_acp_ptr(&mut self) -> &mut Self {
-        self.acp += 1;
-        self.cmd.lines.push(Vec::new());
+    pub fn append<S>(&mut self, xs: &[S]) -> &mut Self
+    where
+        S: ToString + PartialEq::<&'static str>
+    {
+        self.cmd.append(xs);
+        self
+    }
+
+    pub fn append_mv<S>(&mut self, xs: &[S]) -> &mut Self
+    where
+        S: ToString + PartialEq::<&'static str>
+    {
+        self.cmd.append(xs);
+        self.cmd.move_acp_ptr();
         self
     }
 
     pub fn execute_sync(&mut self) -> IoResult::<Output> {
-        let Some(args) = self.get_args()
-        else {
-            let err = IoError::new(ErrorKind::Other, "No arguments to process");
-            return Err(err)
-        };
-
-        if self.echo { log!(CMD, "{args}"); }
-        let mut cmd = Command::new(CMD_ARG);
-        cmd.arg(CMD_ARG2).arg(args);
-
-        if !self.echo {
-            cmd.stdout(Stdio::null())
-               .stderr(Stdio::null());
-        }
-
-        let out = cmd.output()?;
-
-        if !self.keepgoing && !out.status.success() {
-            let code = out.status.code()
-                .expect("Process terminated by signal");
-
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            log!(ERROR, "{stderr}");
-            log!(ERROR, "Compilation exited abnormally with code: {code}");
-            exit(1);
-        }
-        Ok(out)
+        self.cmd.execute_sync()
     }
 
     pub fn execute(&mut self) -> IoResult::<&mut Self> {
-        let out = self.execute_sync()?;
-        if let Some(last) = self.cmd.lines.last_mut() {
-            *last = Vec::new();
-        }
-        self.output_stack.push_back(out);
+        self.cmd.execute()?;
         Ok(self)
     }
 
-    /// Returns vector of child which you can turn into vector of the outputs using Rob::wait_for_children.
     pub fn execute_all_sync(&mut self) -> IoResult::<Vec::<Output>> {
-        let mut outs = Vec::new();
-        for idx in self.ecp..self.cmd.lines.len() {
-            let line = &self.cmd.lines[idx];
-            let args = line.join(" ");
-            if args.is_empty() { continue }
-
-            if self.echo { log!(CMD, "{args}"); }
-            let mut cmd = Command::new(CMD_ARG);
-            cmd.arg(CMD_ARG2).arg(args);
-
-            if !self.echo {
-                cmd.stdout(Stdio::null())
-                   .stderr(Stdio::null());
-            }
-
-            let out = cmd.output()?;
-
-            if !self.keepgoing && !out.status.success() {
-                let code = out.status.code()
-                    .expect("Process terminated by signal");
-
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                log!(ERROR, "{stderr}");
-                log!(ERROR, "Compilation exited abnormally with code: {code}");
-                exit(1);
-            }
-
-            self.ecp += 1;
-            outs.push(out);
-        }
-        Ok(outs)
+        self.cmd.execute_all_sync()
     }
 
-    #[inline]
-    fn get_args(&self) -> Option::<String> {
-        if let Some(args) = self.cmd.lines.last() {
-            if args.is_empty() { None }
-            else               { Some(args.join(" ")) }
-        } else { None }
-    }
-
-    /// Function for receiving outputs of the commands. For instance:
-    /// ```
-    /// let mut rob = Rob::new();
-    ///
-    /// rob
-    ///     .append(&["echo hello"])
-    ///     .execute()?
-    ///     .append(&["clang", "-o build/output", "./test/main.c"])
-    ///     .execute()?
-    ///     .append(&["clang++", "-o build/outputpp", "./test/main.cpp"])
-    ///     .execute()?
-    ///     .append(&["echo byebye"])
-    ///     .execute()?;
-    ///
-    /// while let Some(out) = rob.output() {
-    ///     println!("{out:?}");
-    /// }
-    /// ```
-    /// Will print:
-    /// ```
-    /// [CMD] echo hello
-    /// [INFO] hello
-    /// [CMD] clang -o build/output ./test/main.c
-    /// [CMD] clang++ -o build/outputpp ./test/main.cpp
-    /// [CMD] echo byebye
-    /// [INFO] byebye
-    /// Output { status: ExitStatus(unix_wait_status(0)), stdout: "hello\n", stderr: "" }
-    /// Output { status: ExitStatus(unix_wait_status(0)), stdout: "", stderr: "" }
-    /// Output { status: ExitStatus(unix_wait_status(0)), stdout: "", stderr: "" }
-    /// Output { status: ExitStatus(unix_wait_status(0)), stdout: "byebye\n", stderr: "" }
-    /// ```
-    /// As you can see, you receiving outputs in the reversed order, i think this is the best way of doing that.
     #[inline]
     pub fn output(&mut self) -> Option::<Output> {
-        self.output_stack.pop_front()
+        self.cmd.output()
     }
 
     #[inline]
     pub fn outputs_refs(&self) -> VecDeque::<&Output> {
-        self.output_stack.iter().collect()
+        self.cmd.outputs_refs()
     }
 
     #[inline]
     pub fn outputs(self) -> VecDeque::<Output> {
-        self.output_stack.into_iter().collect()
-    }
-
-    /// Returns vector of child which you can turn into vector of the outputs using Rob::wait_for_children.
-    pub fn execute_all_async(&mut self) -> IoResult::<Vec::<Child>> {
-        let mut children = Vec::new();
-        for line in self.cmd.lines.iter() {
-            let args = line.join(" ");
-            if args.is_empty() { continue }
-
-            if self.echo { log!(CMD, "{args}"); }
-            let mut cmd = Command::new(CMD_ARG);
-            cmd.arg(CMD_ARG2).arg(&args);
-
-            let child = Command::new(CMD_ARG)
-                .arg(CMD_ARG2)
-                .arg(args)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()?;
-
-            children.push(child);
-        }
-        Ok(children)
-    }
-
-    /// Returns vector of child which you can turn into vector of the outputs using Rob::wait_for_children.
-    pub fn execute_all_async_and_wait(&mut self) -> IoResult::<()> {
-        let children = self.execute_all_async()?;
-        Rob::wait_for_children_deq(children.into(), &self.echo)?;
-        Ok(())
-    }
-
-    /// Blocks the main thread and waits for all of the children.
-    pub fn wait_for_children_deq(mut children: VecDeque::<Child>, echo: &bool) -> IoResult::<Vec::<Output>> {
-        let mut ret = Vec::new();
-        while let Some(child) = children.pop_front() {
-            let out = Rob::wait_for_child(child)?;
-            Rob::render_output(&out, echo);
-            ret.push(out);
-        } Ok(ret)
-    }
-
-    /// Blocks the main thread and waits for the child.
-    #[inline]
-    pub fn wait_for_child(child: Child) -> IoResult::<Output> {
-        child.wait_with_output()
+        self.cmd.outputs()
     }
 }
 
@@ -662,6 +810,10 @@ More important TODOs:
     Because you need to have an ability to
     say to the rob, that something need to be
     compiled before something else ykwim.
+
+    (#2): Parse env::args and do something with them
+
+    (#3): Rob clean
 
 Less important TODOs:
     README;
