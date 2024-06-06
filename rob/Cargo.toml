@@ -1,0 +1,11 @@
+[package]
+name = "rob"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+robuild = {path=".."}
+
+[[bin]]
+name = "rob"
+path = "rob.rs"
