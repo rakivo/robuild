@@ -562,7 +562,18 @@ impl Rob {
         self.execute_jobs(false)
     }
 
-    pub fn append_job(&mut self, job: Job) -> &mut Self {
+    #[inline]
+    pub fn append_job_job(&mut self, job: Job) -> &mut Self {
+        self.jobs.push(job);
+        self
+    }
+
+    #[inline]
+    pub fn append_job<S>(&mut self, target: Option::<&str>, deps: Vec::<S>, cmd: RobCommand) -> &mut Self
+    where
+        S: Into::<String>
+    {
+        let job = Job::new(target, deps, cmd);
         self.jobs.push(job);
         self
     }
