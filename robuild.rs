@@ -181,7 +181,7 @@ impl Display for LogLevel {
 }
 
 /// Structure for executing commands (actually just keeping them, but it's just for now)
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct RobCommand {
     lines: Vec::<Vec::<String>>,
     acp: usize, // append command pointer
@@ -455,7 +455,7 @@ impl RobCommand {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Config {
     echo: bool,
     keepgoing: bool,
@@ -481,7 +481,7 @@ impl Config {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct Job {
     target: Option::<String>,
     deps: Vec::<String>,
@@ -538,44 +538,6 @@ pub struct Rob {
 impl Rob {
     pub fn new() -> Rob {
         Rob::default()
-    }
-
-    pub fn execute_jobs(&mut self, sync: bool) -> IoResult::<Vec::<Vec::<Output>>> {
-        let mut outss = Vec::new();
-        for job in self.jobs.iter_mut() {
-            let outs = if sync {
-                job.execute_sync()
-            } else {
-                job.execute_async()
-            }?;
-            outss.push(outs);
-        } Ok(outss)
-    }
-
-    #[inline]
-    pub fn execute_jobs_sync(&mut self) -> IoResult::<Vec::<Vec::<Output>>> {
-        self.execute_jobs(true)
-    }
-
-    #[inline]
-    pub fn execute_jobs_async(&mut self) -> IoResult::<Vec::<Vec::<Output>>> {
-        self.execute_jobs(false)
-    }
-
-    #[inline]
-    pub fn append_job_job(&mut self, job: Job) -> &mut Self {
-        self.jobs.push(job);
-        self
-    }
-
-    #[inline]
-    pub fn append_job<S>(&mut self, target: Option::<&str>, deps: Vec::<S>, cmd: RobCommand) -> &mut Self
-    where
-        S: Into::<String>
-    {
-        let job = Job::new(target, deps, cmd);
-        self.jobs.push(job);
-        self
     }
 
     /// Checks if src file needs rebuild
@@ -683,6 +645,12 @@ impl Rob {
         metadata(p)?.modified()
     }
 
+    /// Takes path and returns it without the file extension
+    #[inline]
+    pub fn noext(p: &str) -> String {
+        p.chars().take_while(|x| *x != '.').collect()
+    }
+
     #[inline]
     pub fn is_file<P>(p: P) -> bool
     where
@@ -749,12 +717,6 @@ impl Rob {
         }
     }
 
-    /// Takes path and returns it without the file extension
-    #[inline]
-    pub fn noext(p: &str) -> String {
-        p.chars().take_while(|x| *x != '.').collect()
-    }
-
     pub fn log(lvl: LogLevel, out: &str, l: u32, f: &str, c: u32) {
         use LogLevel::*;
         match lvl {
@@ -792,6 +754,44 @@ impl Rob {
     {
         self.cmd.append(xs);
         self.cmd.move_acp_ptr();
+        self
+    }
+
+    fn execute_jobs(&mut self, sync: bool) -> IoResult::<Vec::<Vec::<Output>>> {
+        let mut outss = Vec::new();
+        for job in self.jobs.iter_mut() {
+            let outs = if sync {
+                job.execute_sync()
+            } else {
+                job.execute_async()
+            }?;
+            outss.push(outs);
+        } Ok(outss)
+    }
+
+    #[inline]
+    pub fn execute_jobs_sync(&mut self) -> IoResult::<Vec::<Vec::<Output>>> {
+        self.execute_jobs(true)
+    }
+
+    #[inline]
+    pub fn execute_jobs_async(&mut self) -> IoResult::<Vec::<Vec::<Output>>> {
+        self.execute_jobs(false)
+    }
+
+    #[inline]
+    pub fn append_job_job(&mut self, job: Job) -> &mut Self {
+        self.jobs.push(job);
+        self
+    }
+
+    #[inline]
+    pub fn append_job<S>(&mut self, target: Option::<&str>, deps: Vec::<S>, cmd: RobCommand) -> &mut Self
+    where
+        S: Into::<String>
+    {
+        let job = Job::new(target, deps, cmd);
+        self.jobs.push(job);
         self
     }
 
