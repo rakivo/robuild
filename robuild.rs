@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     fmt::{Display, Formatter},
     process::{exit, Command, Output, Stdio, Child},
-    fs::{rename, metadata, read_dir, remove_file, create_dir_all, remove_dir_all},
+    fs::{rename, metadata, read_dir, remove_file, create_dir_all, remove_dir_all}
 };
 
 pub const C_COMPILER: &str = if cfg!(feature = "gcc")     {"gcc"}
@@ -28,11 +28,15 @@ pub const DELIM:    &str = if cfg!(windows) {"\\"} else {"/"};
 pub const CMD_ARG:  &str = if cfg!(windows) {"cmd"} else {"sh"};
 pub const CMD_ARG2: &str = if cfg!(windows) {"/C"} else {"-c"};
 
+/// Special symbol that you can put at the end of your slice while passing it
+/// to the `append` function to perform `append` and move `acp ptr` simultaneously.
+/// But I recommend you to use the `append_mv` function instead, it does the same but,
+/// you don't need to put anything special at the end of the slice.
 pub const MOVE_ACP_PTR_SYMBOL: &str = ".n";
 pub const MAP: &str = MOVE_ACP_PTR_SYMBOL;
 
-pub type IoResult<T> = std::io::Result::<T>;
 pub type IoError = std::io::Error;
+pub type IoResult<T> = std::io::Result::<T>;
 
 /// Call dis macro in your build recipe, and the program will
 /// rebuild itself, freeing you from the need to rebuilding your
@@ -63,19 +67,11 @@ macro_rules! go_rebuild_yourself {
 #[macro_export]
 macro_rules! log {
     ($log_level: tt, $($args: expr), *) => {{
+        #[allow(unused)]
         use LogLevel::*;
-        let lvl = $log_level;
-        let out_ = format!($($args), *);
-        let out = format!("{lvl} {f}:{l}:{c}: {out_}",
-                          lvl = LogLevel::$log_level, f = file!(),
-                          l = line!(), c = column!());
-        match lvl {
-            CMD   => println!("{lvl} {out_}"),
-            INFO  => println!("{lvl} {out_}"),
-            WARN  => println!("{lvl} {out}", lvl = colored!(y."[WARN]")),
-            ERROR => println!("{lvl} {out}", lvl = colored!(r."[ERROR]")),
-            PANIC => unreachable!()
-        }
+        let out = format!($($args), *);
+        let (l, f, c) = (line!(), file!(), column!());
+        Rob::log($log_level, &out, l, f, c);
     }}
 }
 
@@ -115,11 +111,10 @@ macro_rules! mkdirs {
     }}
 }
 
-#[macro_export]
 macro_rules! colored {
-    (r.$str: expr)  => { format!("\x1b[91m{}\x1b[0m", $str) };
-    (y.$str: expr)  => { format!("\x1b[93m{}\x1b[0m", $str) };
-    (br.$str: expr) => { format!("\x1b[31m{}\x1b[0m", $str) };
+    ($f: expr, r.$str: expr)  => { write!($f, "\x1b[91m{}\x1b[0m", $str) };
+    ($f: expr, y.$str: expr)  => { write!($f, "\x1b[93m{}\x1b[0m", $str) };
+    ($f: expr, br.$str: expr) => { write!($f, "\x1b[31m{}\x1b[0m", $str) };
 }
 
 /// Structure for convenient work with directories.
@@ -142,7 +137,7 @@ impl Dir {
     {
         let mut stack = VecDeque::new();
         stack.push_back(root.into());
-        Dir { stack }
+        Dir {stack}
     }
 }
 
@@ -178,9 +173,9 @@ impl Display for LogLevel {
         match self {
             CMD   => write!(f, "[CMD]")?,
             INFO  => write!(f, "[INFO]")?,
-            WARN  => write!(f, "[WARN]")?,
-            ERROR => write!(f, "[ERROR]")?,
-            PANIC => write!(f, "[PANIC]")?
+            WARN  => colored!(f, y."[WARN]")?,
+            ERROR => colored!(f, br."[ERROR]")?,
+            PANIC => colored!(f, r."[PANIC]")?
         } Ok(())
     }
 }
@@ -336,16 +331,16 @@ impl RobCommand {
         } else { None }
     }
 
-    /// Function for receiving outputs of the commands. For instance:
+    /// Function for receiving output of the last executed command.
     /// ```
     /// let mut rob = Rob::new();
     ///
     /// rob
     ///     .append(&["echo hello"])
     ///     .execute()?
-    ///     .append(&["clang", "-o build/output", "./test/main.c"])
+    ///     .append(&[CC, "-o build/output", "./test/main.c"])
     ///     .execute()?
-    ///     .append(&["clang++", "-o build/outputpp", "./test/main.cpp"])
+    ///     .append(&[CXXC, "-o build/outputpp", "./test/main.cpp"])
     ///     .execute()?
     ///     .append(&["echo byebye"])
     ///     .execute()?;
@@ -494,10 +489,13 @@ pub struct Job {
 }
 
 impl Job {
-    // TODO: Abstract away `&str`s
-    pub fn new(target: Option::<String>, deps: Vec::<&str>, cmd: RobCommand) -> Job {
-        let deps = deps.iter().map(ToString::to_string).collect::<Vec::<_>>();
-        Job{target, deps, cmd}
+    pub fn new<S>(target: Option::<&str>, deps: Vec::<S>, cmd: RobCommand) -> Job
+    where
+        S: Into::<String>
+    {
+        let target = target.map(Into::into);
+        let deps = deps.into_iter().map(Into::into).collect::<Vec::<_>>();
+        Job {target, deps, cmd}
     }
 
     #[inline]
@@ -510,16 +508,13 @@ impl Job {
     fn execute(&mut self, sync: bool) -> IoResult::<Vec::<Output>> {
         if self.up_to_date()? {
             if sync {
-                self.cmd.execute_all_sync()
+                return self.cmd.execute_all_sync()
             } else {
-                self.cmd.execute_all_async_and_wait()
+                return self.cmd.execute_all_async_and_wait()
             }
-        } else {
-            if let Some(target) = &self.target {
-                log!(INFO, "'{}' is up to date", target);
-            }
-            Ok(Vec::new())
-        }
+        } else if let Some(target) = &self.target {
+            log!(INFO, "'{}' is up to date", target);
+        } Ok(Vec::new())
     }
 
     pub fn execute_async(&mut self) -> IoResult::<Vec::<Output>> {
@@ -735,15 +730,21 @@ impl Rob {
         }
     }
 
-    #[inline]
-    pub fn panic(out: &str) -> ! {
-        panic!("{out}", out = out.to_owned())
-    }
-
     /// Takes path and returns it without the file extension
     #[inline]
     pub fn noext(p: &str) -> String {
         p.chars().take_while(|x| *x != '.').collect()
+    }
+
+    pub fn log(lvl: LogLevel, out: &str, l: u32, f: &str, c: u32) {
+        use LogLevel::*;
+        match lvl {
+            CMD   => println!("{lvl} {out}"),
+            INFO  => println!("{lvl} {out}"),
+            WARN  => println!("{lvl} {f}:{l}:{c} {out}"),
+            ERROR => println!("{lvl} {f}:{l}:{c} {out}"),
+            PANIC => panic!("{lvl} {f}:{l}:{c} {out}")
+        }
     }
 
     #[inline]
@@ -775,15 +776,18 @@ impl Rob {
         self
     }
 
-    pub fn execute_sync(&mut self) -> IoResult::<Output> {
-        self.cmd.execute_sync()
-    }
-
+    #[inline]
     pub fn execute(&mut self) -> IoResult::<&mut Self> {
         self.cmd.execute()?;
         Ok(self)
     }
 
+    #[inline]
+    pub fn execute_sync(&mut self) -> IoResult::<Output> {
+        self.cmd.execute_sync()
+    }
+
+    #[inline]
     pub fn execute_all_sync(&mut self) -> IoResult::<Vec::<Output>> {
         self.cmd.execute_all_sync()
     }
@@ -808,7 +812,7 @@ impl Rob {
 More important TODOs:
     (#2): Parse env::args and do something with them
 
-    (#3): Rob clean
+    (#3): Rob clean feature
 
 Less important TODOs:
     README;
