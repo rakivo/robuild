@@ -1,9 +1,6 @@
 use std::fs::read_to_string;
 use robuild::*;
 
-const SRC: &str = "main.c";
-const FOO_SRC: &str = "foo.c";
-
 const LIB_FLAGS: &str = "--crate-type=rlib";
 const DEBUG_FLAGS: &str = "-g -C \"opt-level=0\"";
 const THREAD_FLAGS: &str = "-Z threads=10";
@@ -18,16 +15,18 @@ fn main() -> IoResult::<()> {
 
     Rob::mkdir("build").unwrap();
 
+    let src = path!("src", "main.c");
     let out = path!("build", "main");
     let mut cmd = RobCommand::new();
-    cmd.append(&[CC, "-o", &out, SRC]);
+    cmd.append(&[CC, "-o", &out, &src]);
 
+    let foo_src = path!("src", "foo.c");
     let foo_out = path!("build", "foo");
     let mut foo_cmd = RobCommand::new();
     foo_cmd
-        .append_mv(&[CC, "-c hello.c -o", "hello.o"])
-        .append_mv(&["ar ruv", "libhello.a", "hello.o"])
-        .append(&[CC, "-o", &foo_out, FOO_SRC, "libhello.a"]);
+        .append_mv(&[CC, "-c", &path!("src" ,"hello.c"), "-o", &path!("build", "hello.o")])
+        .append_mv(&["ar ruv", "libhello.a", &path!("build", "hello.o")])
+        .append(&[CC, "-o", &foo_out, &foo_src, "libhello.a"]);
 
     let mut mm_cmd = RobCommand::new();
     let mm_src = path!("mm", "mm.rs");
@@ -61,8 +60,8 @@ fn main() -> IoResult::<()> {
        .append(&[&format!("{p1} > {p2}", p1 = &path!("build", "fibm"), p2 = &test_mm_out)]);
 
     Rob::new()
-        .append_job(Job::new(Some(&out), vec![SRC, "main.h"], cmd))
-        .append_job(Job::new(Some(&foo_out), vec![FOO_SRC, "hello.c"], foo_cmd))
+        .append_job(Job::new(Some(&out), vec![&src, &path!("src", "main.h")], cmd))
+        .append_job(Job::new(Some(&foo_out), vec![&foo_src, &path!("src", "hello.c")], foo_cmd))
         .append_job(Job::new(Some(&mm_out), vec![&mm_src], mm_cmd))
         .append_job(Job::new(Some(&translate_masm_out), vec![&load_from_bin_src, &mm_src], translate_masm_cmd))
         .append_job(Job::new(Some(&load_from_bin_out), vec![&translate_masm_src, &mm_src], load_from_bin_cmd))

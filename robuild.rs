@@ -570,17 +570,25 @@ impl Rob {
     /// Checks if src file needs rebuild
     pub fn needs_rebuild(bin: &str, src: &str) -> IoResult::<bool> {
         if !Rob::path_exists(bin) { return Ok(true) }
-        let bin_mod_time = Rob::get_last_modification_time(bin)?;
-        let src_mod_time = Rob::get_last_modification_time(src)?;
+        let bin_mod_time = Rob::get_last_modification_time(bin).map_err(|err| {
+            log!(ERROR, "{err}: {bin}"); err
+        })?;
+        let src_mod_time = Rob::get_last_modification_time(src).map_err(|err| {
+            log!(ERROR, "{err}: {bin}"); err
+        })?;
         Ok(src_mod_time > bin_mod_time)
     }
 
     pub fn needs_rebuild_many(bin: &str, srcs: &Vec::<String>) -> IoResult::<bool> {
         if !Rob::path_exists(bin) { return Ok(true) }
 
-        let bin_mod_time = Rob::get_last_modification_time(bin)?;
+        let bin_mod_time = Rob::get_last_modification_time(bin).map_err(|err| {
+            log!(ERROR, "{err}: {bin}"); err
+        })?;
         for src in srcs {
-            let src_mod_time = Rob::get_last_modification_time(src)?;
+            let src_mod_time = Rob::get_last_modification_time(src).map_err(|err| {
+                log!(ERROR, "{err}: {src}"); err
+            })?;
             if src_mod_time > bin_mod_time {
                 return Ok(true)
             }
