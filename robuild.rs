@@ -66,10 +66,10 @@ macro_rules! go_rebuild_yourself {
 /// ```
 #[macro_export]
 macro_rules! log {
-    ($log_level: tt, $($args: expr), *) => {{
+    ($log_level: tt, $($args: tt)*) => {{
         #[allow(unused)]
         use LogLevel::*;
-        let out = format!($($args), *);
+        let out = format!($($args)*);
         let (l, f, c) = (line!(), file!(), column!());
         Rob::log($log_level, &out, l, f, c);
     }}
@@ -513,7 +513,7 @@ impl Job {
                 return self.cmd.execute_all_async_and_wait()
             }
         } else if let Some(target) = &self.target {
-            log!(INFO, "'{}' is up to date", target);
+            log!(INFO, "'{target}' is up to date");
         } Ok(Vec::new())
     }
 
