@@ -24,7 +24,10 @@ pub const CXX_COMPILER: &str = if cfg!(feature = "gxx")     {"g++"}
 
 pub const CC:       &str = C_COMPILER;
 pub const CXXC:     &str = CXX_COMPILER;
-pub const DELIM:    &str = if cfg!(windows) {"\\"} else {"/"};
+
+pub const DELIM:    &str   = if cfg!(windows) {"\\"} else {"/"};
+pub const DELIM_CHAR: char = if cfg!(windows) {'\\'} else {'/'};
+
 pub const CMD_ARG:  &str = if cfg!(windows) {"cmd"} else {"sh"};
 pub const CMD_ARG2: &str = if cfg!(windows) {"/C"} else {"-c"};
 
