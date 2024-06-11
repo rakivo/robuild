@@ -85,7 +85,7 @@ macro_rules! pathbuf {
     ($($p: expr), *) => {{
         let mut path = std::path::PathBuf::new();
         $(path.push($p);)*
-            path
+        path
     }}
 }
 
@@ -547,6 +547,8 @@ pub struct Rob {
 }
 
 impl Rob {
+    pub const MAX_DIR_LVL: usize = 2;
+
     pub fn new() -> Rob {
         Rob::default()
     }
@@ -728,7 +730,16 @@ impl Rob {
         }
     }
 
+    fn pretty_file_path(file_path: &str) -> String {
+        let mut count = 0;
+        file_path.chars().rev().take_while(|c| {
+            if *c == DELIM_CHAR { count += 1; }
+            count < Self::MAX_DIR_LVL
+        }).collect::<Vec::<_>>().into_iter().rev().collect()
+    }
+
     pub fn log(lvl: LogLevel, out: &str, l: u32, f: &str, c: u32) {
+        let f = Self::pretty_file_path(&f);
         use LogLevel::*;
         match lvl {
             CMD   => println!("{lvl} {out}"),
