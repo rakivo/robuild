@@ -189,7 +189,7 @@ pub struct RobCommand {
     lines: Vec::<Vec::<String>>,
     acp: usize, // append command pointer
     ecp: usize, // execution command pointer
-    cfg: Config,
+    pub cfg: Config,
     output_stack: VecDeque::<Output>,
 }
 
@@ -569,7 +569,7 @@ impl Job {
 /// The main `Rob` structure.
 #[derive(Debug, Default)]
 pub struct Rob {
-    cfg: Config,
+    pub cfg: Config,
     cmd: RobCommand,
     jobs: Vec::<Job>,
 }
