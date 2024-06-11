@@ -465,6 +465,18 @@ impl RobCommand {
     pub fn wait_for_child(child: Child) -> IoResult::<Output> {
         child.wait_with_output()
     }
+
+    #[inline]
+    pub fn echo(&mut self, echo: bool) -> &mut Self {
+        self.cfg.echo(echo);
+        self
+    }
+
+    #[inline]
+    pub fn keepgoing(&mut self, keepgoing: bool) -> &mut Self {
+        self.cfg.keepgoing(keepgoing);
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
