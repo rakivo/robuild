@@ -184,7 +184,7 @@ impl Display for LogLevel {
 }
 
 /// Structure for executing commands (actually just keeping them, but it's just for now)
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RobCommand {
     lines: Vec::<Vec::<String>>,
     acp: usize, // append command pointer
@@ -467,7 +467,7 @@ impl RobCommand {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Config {
     echo: bool,
     keepgoing: bool,
@@ -498,6 +498,7 @@ pub struct Job {
     target: String,
     deps: Vec::<String>,
     cmd: RobCommand,
+    reusable_cmd: bool
 }
 
 impl Job {
@@ -507,7 +508,28 @@ impl Job {
     {
         let target = target.to_owned();
         let deps = deps.into_iter().map(Into::into).collect::<Vec::<_>>();
-        Job {target, deps, cmd}
+        Job {target, deps, cmd, reusable_cmd: false}
+    }
+
+    #[inline(always)]
+    pub fn target(&self) -> &String {
+        &self.target
+    }
+
+    #[inline(always)]
+    pub fn deps(&self) -> &Vec::<String> {
+        &self.deps
+    }
+
+    #[inline(always)]
+    pub fn cmd(&self) -> &RobCommand {
+        &self.cmd
+    }
+
+    #[inline(always)]
+    pub fn reusable_cmd(&mut self, reusable_cmd: bool) -> &mut Self {
+        self.reusable_cmd = reusable_cmd;
+        self
     }
 
     #[inline]
@@ -517,10 +539,16 @@ impl Job {
 
     fn execute(&mut self, sync: bool) -> IoResult::<Vec::<Output>> {
         if self.up_to_date()? {
-            if sync {
-                return self.cmd.execute_all_sync()
+            let cmd = if self.reusable_cmd {
+                &mut self.cmd.clone()
             } else {
-                return self.cmd.execute_all_async_and_wait()
+                &mut self.cmd
+            };
+
+            if sync {
+                return cmd.execute_all_sync()
+            } else {
+                return cmd.execute_all_async_and_wait()
             }
         } else {
             log!(INFO, "'{target}' is up to date", target = self.target);
@@ -547,7 +575,7 @@ pub struct Rob {
 }
 
 impl Rob {
-    pub const MAX_DIR_LVL: usize = 2;
+    pub const MAX_DIR_LVL: usize = 4;
 
     pub fn new() -> Rob {
         Rob::default()
