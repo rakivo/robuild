@@ -60,12 +60,12 @@ fn main() -> IoResult::<()> {
        .append(&[&format!("{p1} > {p2}", p1 = &path!("build", "fibm"), p2 = &test_mm_out)]);
 
     Rob::new()
-        .append_job(Some(&out),                vec![&src, &path!("src", "main.h")],           cmd)
-        .append_job(Some(&foo_out),            vec![&foo_src, &path!("src", "hello.c")],      foo_cmd)
-        .append_job(Some(&mm_out),             vec![&mm_src],                                 mm_cmd)
-        .append_job(Some(&translate_masm_out), vec![&load_from_bin_src, &mm_src],             translate_masm_cmd)
-        .append_job(Some(&load_from_bin_out),  vec![&translate_masm_src, &mm_src],            load_from_bin_cmd)
-        .append_job(None,                      vec![&load_from_bin_src, &translate_masm_src], test_mm_cmd)
+        .append_job(&out,                vec![&src, &path!("src", "main.h")],           cmd)
+        .append_job(&foo_out,            vec![&foo_src, &path!("src", "hello.c")],      foo_cmd)
+        .append_job(&mm_out,             vec![&mm_src],                                 mm_cmd)
+        .append_job(&translate_masm_out, vec![&load_from_bin_src, &mm_src],             translate_masm_cmd)
+        .append_job(&load_from_bin_out,  vec![&translate_masm_src, &mm_src],            load_from_bin_cmd)
+        .append_job(" ",                 vec![&load_from_bin_src, &translate_masm_src], test_mm_cmd)
         .execute_jobs_async()?;
 
     let output_string = read_to_string(&test_mm_out)?;

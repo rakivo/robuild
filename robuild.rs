@@ -508,6 +508,7 @@ impl Config {
 #[derive(Debug, Default)]
 pub struct Job {
     target: String,
+    phony: bool,
     deps: Vec::<String>,
     cmd: RobCommand,
     reusable_cmd: bool
@@ -520,7 +521,7 @@ impl Job {
     {
         let target = target.to_owned();
         let deps = deps.into_iter().map(Into::into).collect::<Vec::<_>>();
-        Job {target, deps, cmd, reusable_cmd: false}
+        Job {target, deps, cmd, ..Self::default()}
     }
 
     #[inline(always)]
@@ -544,9 +545,19 @@ impl Job {
         self
     }
 
+    #[inline(always)]
+    pub fn phony(&mut self, phony: bool) -> &mut Self {
+        self.phony = phony;
+        self
+    }
+
     #[inline]
     pub fn up_to_date(&self) -> IoResult::<bool> {
-        Rob::needs_rebuild_many(&self.target, &self.deps)
+        if self.phony {
+            Ok(true)
+        } else {
+            Rob::needs_rebuild_many(&self.target, &self.deps)
+        }
     }
 
     fn execute(&mut self, sync: bool) -> IoResult::<Vec::<Output>> {
