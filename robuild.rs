@@ -795,8 +795,8 @@ impl Rob {
         match lvl {
             CMD   => println!("{lvl} {out}"),
             INFO  => println!("{lvl} {out}"),
-            WARN  => println!("{lvl} {f}:{l}:{c} {out}"),
-            ERROR => println!("{lvl} {f}:{l}:{c} {out}"),
+            WARN  => println!("{lvl} {out}"),
+            ERROR => println!("{lvl} {out}"),
             PANIC => panic!("{lvl} {f}:{l}:{c} {out}")
         }
     }
