@@ -11,16 +11,16 @@ use std::{
 };
 
 pub const C_COMPILER: &str = if cfg!(feature = "gcc")     {"gcc"}
-                        else if cfg!(feature = "clang")   {"clang"}
-                        else if cfg!(feature = "mingw32") {"x86_64-w64-mingw32-gcc"}
-                        else if cfg!(windows)             {"cl.exe"}
-                        else                              {"cc"};
+else if cfg!(feature = "clang")   {"clang"}
+else if cfg!(feature = "mingw32") {"x86_64-w64-mingw32-gcc"}
+else if cfg!(windows)             {"cl.exe"}
+else                              {"cc"};
 
 pub const CXX_COMPILER: &str = if cfg!(feature = "gxx")     {"g++"}
-                          else if cfg!(feature = "clangxx") {"clang++"}
-                          else if cfg!(feature = "mingw32") {"x86_64-w64-mingw32-g++"}
-                          else if cfg!(windows)             {"cl.exe"}
-                          else                              {"c++"};
+else if cfg!(feature = "clangxx") {"clang++"}
+else if cfg!(feature = "mingw32") {"x86_64-w64-mingw32-g++"}
+else if cfg!(windows)             {"cl.exe"}
+else                              {"c++"};
 
 pub const CC:       &str = C_COMPILER;
 pub const CXXC:     &str = CXX_COMPILER;
@@ -85,7 +85,7 @@ macro_rules! pathbuf {
     ($($p: expr), *) => {{
         let mut path = std::path::PathBuf::new();
         $(path.push($p);)*
-        path
+            path
     }}
 }
 
@@ -305,7 +305,7 @@ impl RobCommand {
 
             if !self.cfg.echo {
                 cmd.stdout(Stdio::null())
-                   .stderr(Stdio::null());
+                    .stderr(Stdio::null());
             }
 
             let out = cmd.output()?;
@@ -486,26 +486,24 @@ impl Config {
 
 #[derive(Debug, Default)]
 pub struct Job {
-    target: Option::<String>,
+    target: String,
     deps: Vec::<String>,
     cmd: RobCommand,
 }
 
 impl Job {
-    pub fn new<S>(target: Option::<&str>, deps: Vec::<S>, cmd: RobCommand) -> Job
+    pub fn new<S>(target: &str, deps: Vec::<S>, cmd: RobCommand) -> Job
     where
         S: Into::<String>
     {
-        let target = target.map(Into::into);
+        let target = target.to_owned();
         let deps = deps.into_iter().map(Into::into).collect::<Vec::<_>>();
         Job {target, deps, cmd}
     }
 
     #[inline]
     pub fn up_to_date(&self) -> IoResult::<bool> {
-        if let Some(target) = &self.target {
-            Rob::needs_rebuild_many(&target, &self.deps)
-        } else { Ok(true) }
+        Rob::needs_rebuild_many(&self.target, &self.deps)
     }
 
     fn execute(&mut self, sync: bool) -> IoResult::<Vec::<Output>> {
@@ -515,9 +513,10 @@ impl Job {
             } else {
                 return self.cmd.execute_all_async_and_wait()
             }
-        } else if let Some(target) = &self.target {
-            log!(INFO, "'{target}' is up to date");
-        } Ok(Vec::new())
+        } else {
+            log!(INFO, "'{target}' is up to date", target = self.target);
+            Ok(Vec::new())
+        }
     }
 
     pub fn execute_async(&mut self) -> IoResult::<Vec::<Output>> {
@@ -789,7 +788,7 @@ impl Rob {
     }
 
     #[inline]
-    pub fn append_job<S>(&mut self, target: Option::<&str>, deps: Vec::<S>, cmd: RobCommand) -> &mut Self
+    pub fn append_job<S>(&mut self, target: &str, deps: Vec::<S>, cmd: RobCommand) -> &mut Self
     where
         S: Into::<String>
     {
