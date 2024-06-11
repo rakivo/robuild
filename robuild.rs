@@ -193,6 +193,15 @@ pub struct RobCommand {
     output_stack: VecDeque::<Output>,
 }
 
+impl From<Vec::<Vec::<String>>> for RobCommand {
+    fn from(lines: Vec::<Vec::<String>>) -> Self {
+        Self {
+            lines,
+            ..Self::default()
+        }
+    }
+}
+
 impl Default for RobCommand {
     fn default() -> Self {
         Self {
