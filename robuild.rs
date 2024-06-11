@@ -505,7 +505,7 @@ impl Config {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Job {
     target: String,
     phony: bool,
