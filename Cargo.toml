@@ -1,7 +1,7 @@
 [package]
 authors = ["Mark Tyrkba <marktyrkba456@gmail.com>"]
 name = "robuild"
-version = "0.0.17"
+version = "0.0.18"
 edition = "2021"
 readme = "README.md"
 categories = ["development-tools::build-utils"]

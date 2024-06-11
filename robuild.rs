@@ -554,7 +554,7 @@ impl Job {
     #[inline]
     pub fn up_to_date(&self) -> IoResult::<bool> {
         if self.phony {
-            Ok(true)
+            Ok(false)
         } else {
             Rob::needs_rebuild_many(&self.target, &self.deps)
         }
