@@ -552,40 +552,41 @@ impl Job {
     }
 
     #[inline]
-    pub fn up_to_date(&self) -> IoResult::<bool> {
+    pub fn needs_rebuild(&self) -> IoResult::<bool> {
         if self.phony {
-            Ok(false)
+            Ok(true)
         } else {
             Rob::needs_rebuild_many(&self.target, &self.deps)
         }
     }
 
-    fn execute(&mut self, sync: bool) -> IoResult::<Vec::<Output>> {
-        if self.up_to_date()? {
+    fn execute(&mut self, sync: bool, up_to_date_echo: bool) -> IoResult::<Vec::<Output>> {
+        if self.needs_rebuild()? {
             let cmd = if self.reusable_cmd {
                 &mut self.cmd.clone()
             } else {
                 &mut self.cmd
             };
-
             if sync {
                 return cmd.execute_all_sync()
             } else {
                 return cmd.execute_all_async_and_wait()
             }
         } else {
-            log!(INFO, "'{target}' is up to date", target = self.target);
+            if up_to_date_echo {
+                log!(INFO, "Nothing to be done for '{target}'.", target = self.target);
+            }
             Ok(Vec::new())
         }
     }
 
-    pub fn execute_async(&mut self) -> IoResult::<Vec::<Output>> {
-        self.execute(false)
+    pub fn execute_async(&mut self, up_to_date_echo: bool) -> IoResult::<Vec::<Output>> {
+        self.execute(false, up_to_date_echo)
     }
 
     #[inline]
-    pub fn execute_sync(&mut self) -> IoResult::<Vec::<Output>> {
-        self.execute(true)
+    pub fn execute_sync(&mut self, up_to_date_echo: bool) -> IoResult::<Vec::<Output>> {
+        self.execute(true, up_to_date_echo)
     }
 }
 
@@ -834,9 +835,9 @@ impl Rob {
         let mut outss = Vec::new();
         for job in self.jobs.iter_mut() {
             let outs = if sync {
-                job.execute_sync()
+                job.execute_sync(true)
             } else {
-                job.execute_async()
+                job.execute_async(true)
             }?;
             outss.push(outs);
         } Ok(outss)
