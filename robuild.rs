@@ -560,7 +560,7 @@ impl Job {
         }
     }
 
-    fn execute(&mut self, sync: bool, up_to_date_echo: bool) -> IoResult::<Vec::<Output>> {
+    fn execute(&mut self, sync: bool) -> IoResult::<Vec::<Output>> {
         if self.needs_rebuild()? {
             let cmd = if self.reusable_cmd {
                 &mut self.cmd.clone()
@@ -573,20 +573,18 @@ impl Job {
                 return cmd.execute_all_async_and_wait()
             }
         } else {
-            if up_to_date_echo {
-                log!(INFO, "Nothing to be done for '{target}'.", target = self.target);
-            }
+            log!(INFO, "Nothing to be done for '{target}'.", target = self.target);
             Ok(Vec::new())
         }
     }
 
-    pub fn execute_async(&mut self, up_to_date_echo: bool) -> IoResult::<Vec::<Output>> {
-        self.execute(false, up_to_date_echo)
+    pub fn execute_async(&mut self) -> IoResult::<Vec::<Output>> {
+        self.execute(false)
     }
 
     #[inline]
-    pub fn execute_sync(&mut self, up_to_date_echo: bool) -> IoResult::<Vec::<Output>> {
-        self.execute(true, up_to_date_echo)
+    pub fn execute_sync(&mut self) -> IoResult::<Vec::<Output>> {
+        self.execute(true)
     }
 }
 
@@ -835,9 +833,9 @@ impl Rob {
         let mut outss = Vec::new();
         for job in self.jobs.iter_mut() {
             let outs = if sync {
-                job.execute_sync(true)
+                job.execute_sync()
             } else {
-                job.execute_async(true)
+                job.execute_async()
             }?;
             outss.push(outs);
         } Ok(outss)
