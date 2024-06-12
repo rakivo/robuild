@@ -193,6 +193,14 @@ pub struct RobCommand {
     output_stack: VecDeque::<Output>,
 }
 
+impl From<Config> for RobCommand {
+    fn from(cfg: Config) -> Self {
+        Self {
+            cfg, ..Self::default()
+        }
+    }
+}
+
 impl From<Vec::<Vec::<String>>> for RobCommand {
     fn from(lines: Vec::<Vec::<String>>) -> Self {
         Self {
@@ -540,6 +548,16 @@ impl Job {
     }
 
     #[inline(always)]
+    pub fn cfg(&self) -> &Config {
+        &self.cmd.cfg
+    }
+
+    #[inline(always)]
+    pub fn cfg_mut(&mut self) -> &mut Config {
+        &mut self.cmd.cfg
+    }
+
+    #[inline(always)]
     pub fn reusable_cmd(&mut self, reusable_cmd: bool) -> &mut Self {
         self.reusable_cmd = reusable_cmd;
         self
@@ -548,6 +566,18 @@ impl Job {
     #[inline(always)]
     pub fn phony(&mut self, phony: bool) -> &mut Self {
         self.phony = phony;
+        self
+    }
+
+    #[inline(always)]
+    pub fn keepgoing(&mut self, keepgoing: bool) -> &mut Self {
+        self.cmd.keepgoing(keepgoing);
+        self
+    }
+
+    #[inline(always)]
+    pub fn echo(&mut self, echo: bool) -> &mut Self {
+        self.cmd.echo(echo);
         self
     }
 
