@@ -3,6 +3,7 @@ use std::{
     io::ErrorKind,
     time::SystemTime,
     default::Default,
+    hash::{Hash, Hasher},
     collections::VecDeque,
     path::{Path, PathBuf},
     fmt::{Display, Formatter},
@@ -116,7 +117,7 @@ macro_rules! mkdirs {
 
 macro_rules! colored {
     ($f: expr, r.$str: expr)  => { write!($f, "\x1b[91m{}\x1b[0m", $str) };
-    ($f: expr, y.$str: expr)  => { write!($f, "\x1b[93m{}\x1b[0m", $str) };
+    ($f: expr, y.$str: expr) => { write!($f, "\x1b[33m{}\x1b[0m", $str) };
     ($f: expr, br.$str: expr) => { write!($f, "\x1b[31m{}\x1b[0m", $str) };
 }
 
@@ -184,13 +185,22 @@ impl Display for LogLevel {
 }
 
 /// Structure for executing commands (actually just keeping them, but it's just for now)
-#[derive(Debug, Clone)]
+#[derive(Eq, Debug, Clone, PartialEq)]
 pub struct RobCommand {
     lines: Vec::<Vec::<String>>,
     acp: usize, // append command pointer
     ecp: usize, // execution command pointer
     pub cfg: Config,
     output_stack: VecDeque::<Output>,
+}
+
+impl Hash for RobCommand {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.lines.hash(state);
+        self.acp.hash(state);
+        self.ecp.hash(state);
+        self.cfg.hash(state);
+    }
 }
 
 impl From<Config> for RobCommand {
@@ -487,7 +497,7 @@ impl RobCommand {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Hash, Eq, Debug, Clone, PartialEq)]
 pub struct Config {
     echo: bool,
     keepgoing: bool,
@@ -513,7 +523,7 @@ impl Config {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Hash, Eq, Debug, Clone, Default, PartialEq)]
 pub struct Job {
     target: String,
     phony: bool,
@@ -619,7 +629,7 @@ impl Job {
 }
 
 /// The main `Rob` structure.
-#[derive(Debug, Default)]
+#[derive(Hash, Eq, Debug, Clone, Default, PartialEq)]
 pub struct Rob {
     pub cfg: Config,
     cmd: RobCommand,
