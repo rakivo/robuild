@@ -288,7 +288,17 @@ impl RobCommand {
         Ok(self)
     }
 
+    #[inline]
     pub fn execute_sync(&mut self) -> IoResult::<Output> {
+        self.execute_sync_exit(true)
+    }
+
+    #[inline]
+    pub fn execute_sync_dont_exit(&mut self) -> IoResult::<Output> {
+        self.execute_sync_exit(false)
+    }
+
+    fn execute_sync_exit(&mut self, exit_: bool) -> IoResult::<Output> {
         let Some(args) = self.get_args()
         else {
             let err = IoError::new(ErrorKind::Other, "No arguments to process");
@@ -313,13 +323,26 @@ impl RobCommand {
             let stderr = String::from_utf8_lossy(&out.stderr);
             log!(ERROR, "{stderr}");
             log!(ERROR, "Compilation exited abnormally with code: {code}");
-            exit(1);
+
+            if exit_ {
+                exit(1);
+            }
         }
         Ok(out)
     }
 
-    /// Returns vector of child which you can turn into vector of the outputs using Rob::wait_for_children.
+    #[inline]
     pub fn execute_all_sync(&mut self) -> IoResult::<Vec::<Output>> {
+        self.execute_all_sync_exit(true)
+    }
+
+    #[inline]
+    pub fn execute_all_sync_dont_exit(&mut self) -> IoResult::<Vec::<Output>> {
+        self.execute_all_sync_exit(false)
+    }
+
+    /// Returns vector of child which you can turn into vector of the outputs using Rob::wait_for_children.
+    pub fn execute_all_sync_exit(&mut self, exit_: bool) -> IoResult::<Vec::<Output>> {
         let mut outs = Vec::new();
         for idx in self.ecp..self.lines.len() {
             let line = &self.lines[idx];
@@ -344,7 +367,10 @@ impl RobCommand {
                 let stderr = String::from_utf8_lossy(&out.stderr);
                 log!(ERROR, "{stderr}");
                 log!(ERROR, "Compilation exited abnormally with code: {code}");
-                exit(1);
+
+                if exit_ {
+                    exit(1);
+                }
             }
 
             self.ecp += 1;
@@ -441,39 +467,49 @@ impl RobCommand {
         }
     }
 
-    fn render_output(out: &Output, cfg: &Config) {
-        if out.status.success() {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            if !stdout.is_empty() && cfg.echo {
-                let formatted = Self::format_out(&stdout);
-                log!(INFO, "{formatted}");
-            }
-        } else {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            if !stderr.is_empty() && cfg.echo {
-                let formatted = Self::format_out(&stderr);
-                log!(ERROR, "{formatted}");
-                if !cfg.keepgoing {
-                    let code = out.status.code().expect("Process terminated by signal");
-                    log!(ERROR, "Compilation exited abnormally with code: {code}");
-                    exit(1);
-                }
-            }
-        }
+    #[inline]
+    pub fn execute_all_async_and_wait(&mut self) -> IoResult::<Vec::<Output>> {
+        self.execute_all_async_and_wait_exit(true)
+    }
+
+    #[inline]
+    pub fn execute_all_async_and_wait_dont_exit(&mut self) -> IoResult::<Vec::<Output>> {
+        self.execute_all_async_and_wait_exit(false)
     }
 
     /// Returns vector of child which you can turn into vector of the outputs using Rob::wait_for_children.
-    pub fn execute_all_async_and_wait(&mut self) -> IoResult::<Vec::<Output>> {
+    pub fn execute_all_async_and_wait_exit(&mut self, exit: bool) -> IoResult::<Vec::<Output>> {
         let children = self.execute_all_async()?;
-        Self::wait_for_children_deq(children.into(), &self.cfg)
+        Self::wait_for_children_deq(children.into(), &self.cfg, exit)
     }
 
     /// Blocks the main thread and waits for all of the children.
-    pub fn wait_for_children_deq(mut children: VecDeque::<Child>, cfg: &Config) -> IoResult::<Vec::<Output>> {
+    pub fn wait_for_children_deq(mut children: VecDeque::<Child>, cfg: &Config, exit_: bool) -> IoResult::<Vec::<Output>> {
         let mut ret = Vec::new();
         while let Some(child) = children.pop_front() {
             let out = Self::wait_for_child(child)?;
-            Self::render_output(&out, cfg);
+
+            if out.status.success() {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                if !stdout.is_empty() && cfg.echo {
+                    let formatted = Self::format_out(&stdout);
+                    log!(INFO, "{formatted}");
+                }
+            } else {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                if !stderr.is_empty() && cfg.echo {
+                    let formatted = Self::format_out(&stderr);
+                    log!(ERROR, "{formatted}");
+                    if !cfg.keepgoing {
+                        let code = out.status.code().expect("Process terminated by signal");
+                        log!(ERROR, "Compilation exited abnormally with code: {code}");
+                        if exit_ {
+                            exit(1);
+                        }
+                    }
+                }
+            }
+
             ret.push(out);
         } Ok(ret)
     }
@@ -600,7 +636,7 @@ impl Job {
         }
     }
 
-    fn execute(&mut self, sync: bool) -> IoResult::<Vec::<Output>> {
+    fn execute(&mut self, sync: bool, exit_: bool) -> IoResult::<Vec::<Output>> {
         if self.needs_rebuild()? {
             let cmd = if self.reusable_cmd {
                 &mut self.cmd.clone()
@@ -608,9 +644,17 @@ impl Job {
                 &mut self.cmd
             };
             if sync {
-                return cmd.execute_all_sync()
+                return if exit_ {
+                    cmd.execute_all_sync()
+                } else {
+                    cmd.execute_all_sync_dont_exit()
+                }
             } else {
-                return cmd.execute_all_async_and_wait()
+                return if exit_ {
+                    cmd.execute_all_async_and_wait()
+                } else {
+                    cmd.execute_all_async_and_wait_dont_exit()
+                }
             }
         } else {
             log!(INFO, "Nothing to be done for '{target}'.", target = self.target);
@@ -618,13 +662,20 @@ impl Job {
         }
     }
 
-    pub fn execute_async(&mut self) -> IoResult::<Vec::<Output>> {
-        self.execute(false)
+    pub fn execute_async_dont_exit(&mut self) -> IoResult::<Vec::<Output>> {
+        self.execute(false, false)
     }
 
-    #[inline]
+    pub fn execute_async(&mut self) -> IoResult::<Vec::<Output>> {
+        self.execute(false, true)
+    }
+
+    pub fn execute_sync_dont_exit(&mut self) -> IoResult::<Vec::<Output>> {
+        self.execute(true, false)
+    }
+
     pub fn execute_sync(&mut self) -> IoResult::<Vec::<Output>> {
-        self.execute(true)
+        self.execute(true, true)
     }
 }
 
