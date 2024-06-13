@@ -117,7 +117,7 @@ macro_rules! mkdirs {
 
 macro_rules! colored {
     ($f: expr, r.$str: expr)  => { write!($f, "\x1b[91m{}\x1b[0m", $str) };
-    ($f: expr, y.$str: expr) => { write!($f, "\x1b[33m{}\x1b[0m", $str) };
+    ($f: expr, y.$str: expr)  => { write!($f, "\x1b[93m{}\x1b[0m", $str) };
     ($f: expr, br.$str: expr) => { write!($f, "\x1b[31m{}\x1b[0m", $str) };
 }
 
