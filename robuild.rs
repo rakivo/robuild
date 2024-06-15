@@ -535,8 +535,8 @@ impl RobCommand {
 
 #[derive(Hash, Eq, Debug, Clone, PartialEq)]
 pub struct Config {
-    echo: bool,
-    keepgoing: bool,
+    pub echo: bool,
+    pub keepgoing: bool,
 }
 
 impl Default for Config {
