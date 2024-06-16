@@ -73,9 +73,7 @@ macro_rules! log {
     ($log_level: tt, $($args: tt)*) => {{
         #[allow(unused)]
         use LogLevel::*;
-        let out = format!($($args)*);
-        let (l, f, c) = (line!(), file!(), column!());
-        Rob::log($log_level, &out, l, f, c);
+        Rob::log($log_level, &format!($($args)*));
     }}
 }
 
@@ -912,23 +910,12 @@ impl Rob {
         }
     }
 
-    fn pretty_file_path(file_path: &str) -> String {
-        let mut count = 0;
-        file_path.chars().rev().take_while(|c| {
-            if *c == DELIM_CHAR { count += 1; }
-            count < Self::MAX_DIR_LVL
-        }).collect::<Vec::<_>>().into_iter().rev().collect()
-    }
-
-    pub fn log(lvl: LogLevel, out: &str, l: u32, f: &str, c: u32) {
-        let f = Self::pretty_file_path(&f);
+    #[track_caller]
+    pub fn log(lvl: LogLevel, out: &str) {
         use LogLevel::*;
         match lvl {
-            CMD   => println!("{lvl} {out}"),
-            INFO  => println!("{lvl} {out}"),
-            WARN  => println!("{lvl} {out}"),
-            ERROR => println!("{lvl} {out}"),
-            PANIC => panic!("{lvl} {f}:{l}:{c} {out}")
+            PANIC => panic!("{lvl} {out}"),
+            _     => println!("{lvl} {out}")
         }
     }
 
