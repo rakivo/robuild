@@ -163,6 +163,7 @@ impl Iterator for DirRec {
 }
 
 /// Structure for convenient non-recursive work with directories.
+#[derive(Debug)]
 pub struct Dir {
     paths: Vec::<PathBuf>,
 }
