@@ -123,29 +123,29 @@ macro_rules! colored {
 
 /// Structure for convenient work with directories.
 #[derive(Debug)]
-pub struct Dir {
+pub struct DirRec {
     stack: VecDeque::<PathBuf>,
 }
 
-impl Dir {
+impl DirRec {
     /// Takes path to a directory and returns
-    /// instance of the iterable struct `Dir`.
+    /// instance of the iterable struct `DirRec`.
     ///
-    /// `Dir` iterates using the BFS algorithm,
+    /// `DirRec` iterates using the BFS algorithm,
     ///
-    /// if current element is file `Dir` returns it,
+    /// if current element is file `DirRec` returns it,
     /// otherwise it iterates that directory and checkes for other files.
-    pub fn new<P>(root: P) -> Dir
+    pub fn new<P>(root: P) -> DirRec
     where
         P: Into::<PathBuf>
     {
         let mut stack = VecDeque::new();
         stack.push_back(root.into());
-        Dir {stack}
+        DirRec {stack}
     }
 }
 
-impl Iterator for Dir {
+impl Iterator for DirRec {
     type Item = PathBuf;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -159,6 +159,46 @@ impl Iterator for Dir {
                 Err(e) => eprintln!("ERROR: {e}")
             }
         } None
+    }
+}
+
+/// Structure for convenient non-recursive work with directories.
+pub struct Dir {
+    paths: Vec::<PathBuf>,
+}
+
+impl Dir {
+    /// Takes path to a directory and returns
+    /// instance of the iterable struct `Dir`.
+    ///
+    /// `Dir` iterates using the BFS algorithm,
+    ///
+    /// Unlike `DirRec`, `Dir` iterates only thru each ! File ! in specified directory,
+    /// and does not iterates all of nested directories recursively.
+    pub fn new<P>(root: P) -> Dir
+    where
+        P: Into::<PathBuf>
+    {
+        Dir {
+            paths: if let Ok(entries) = read_dir(root.into()) {
+                entries.into_iter()
+                    .filter_map(Result::ok)
+                    .filter(|e| e.path().is_file())
+                    .map(|e| e.path())
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        }
+    }
+}
+
+impl IntoIterator for Dir {
+    type Item = PathBuf;
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.paths.into_iter()
     }
 }
 
