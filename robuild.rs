@@ -1,5 +1,6 @@
 use std::{
     env,
+    result,
     io::ErrorKind,
     time::SystemTime,
     default::Default,
@@ -371,17 +372,17 @@ impl RobCommand {
     }
 
     #[inline]
-    pub fn execute_all_sync(&mut self) -> IoResult::<Vec::<Output>> {
+    pub fn execute_all_sync(&mut self) -> RobResult::<Vec::<Output>> {
         self.execute_all_sync_exit(true)
     }
 
     #[inline]
-    pub fn execute_all_sync_dont_exit(&mut self) -> IoResult::<Vec::<Output>> {
+    pub fn execute_all_sync_dont_exit(&mut self) -> RobResult::<Vec::<Output>> {
         self.execute_all_sync_exit(false)
     }
 
     /// Returns vector of child which you can turn into vector of the outputs using Rob::wait_for_children.
-    pub fn execute_all_sync_exit(&mut self, exit_: bool) -> IoResult::<Vec::<Output>> {
+    pub fn execute_all_sync_exit(&mut self, exit_: bool) -> RobResult::<Vec::<Output>> {
         let mut outs = Vec::new();
         for idx in self.ecp..self.lines.len() {
             let line = &self.lines[idx];
@@ -394,10 +395,12 @@ impl RobCommand {
 
             if !self.cfg.echo {
                 cmd.stdout(Stdio::null())
-                    .stderr(Stdio::null());
+                   .stderr(Stdio::null());
             }
 
-            let out = cmd.output()?;
+            let out = cmd.output().map_err(|err| {
+                RobError::FailedToGetOutput(err)
+            })?;
 
             if !self.cfg.keepgoing && !out.status.success() {
                 let code = out.status.code()
@@ -474,7 +477,7 @@ impl RobCommand {
     }
 
     /// Returns vector of child which you can turn into vector of the outputs using Rob::wait_for_children.
-    pub fn execute_all_async(&mut self) -> IoResult::<Vec::<Child>> {
+    pub fn execute_all_async(&mut self) -> RobResult::<Vec::<Child>> {
         let mut children = Vec::new();
         for idx in self.ecp..self.lines.len() {
             let line = &self.lines[idx];
@@ -490,7 +493,8 @@ impl RobCommand {
                 .arg(args)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
-                .spawn()?;
+                .spawn()
+                .map_err(|err| RobError::FailedToSpawnChild(err))?;
 
             self.ecp += 1;
             children.push(child);
@@ -507,26 +511,28 @@ impl RobCommand {
     }
 
     #[inline]
-    pub fn execute_all_async_and_wait(&mut self) -> IoResult::<Vec::<Output>> {
+    pub fn execute_all_async_and_wait(&mut self) -> RobResult::<Vec::<Output>> {
         self.execute_all_async_and_wait_exit(true)
     }
 
     #[inline]
-    pub fn execute_all_async_and_wait_dont_exit(&mut self) -> IoResult::<Vec::<Output>> {
+    pub fn execute_all_async_and_wait_dont_exit(&mut self) -> RobResult::<Vec::<Output>> {
         self.execute_all_async_and_wait_exit(false)
     }
 
     /// Returns vector of child which you can turn into vector of the outputs using Rob::wait_for_children.
-    pub fn execute_all_async_and_wait_exit(&mut self, exit: bool) -> IoResult::<Vec::<Output>> {
+    pub fn execute_all_async_and_wait_exit(&mut self, exit: bool) -> RobResult::<Vec::<Output>> {
         let children = self.execute_all_async()?;
         Self::wait_for_children_deq(children.into(), &self.cfg, exit)
     }
 
     /// Blocks the main thread and waits for all of the children.
-    pub fn wait_for_children_deq(mut children: VecDeque::<Child>, cfg: &Config, exit_: bool) -> IoResult::<Vec::<Output>> {
+    pub fn wait_for_children_deq(mut children: VecDeque::<Child>, cfg: &Config, exit_: bool) -> RobResult::<Vec::<Output>> {
         let mut ret = Vec::new();
         while let Some(child) = children.pop_front() {
-            let out = Self::wait_for_child(child)?;
+            let out = Self::wait_for_child(child).map_err(|err| {
+                RobError::FailedToGetOutput(err)
+            })?;
 
             if out.status.success() {
                 let stdout = String::from_utf8_lossy(&out.stdout);
@@ -607,6 +613,26 @@ pub struct Job {
     reusable_cmd: bool
 }
 
+#[derive(Debug)]
+pub enum RobError {
+    NotFound(String),
+    FailedToGetOutput(IoError),
+    FailedToSpawnChild(IoError)
+}
+
+impl Display for RobError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        use RobError::*;
+        match self {
+            NotFound(file_path)     => write!(f, "File not found: {file_path}"),
+            FailedToGetOutput(err)  => write!(f, "Failed to get output: {err}", err = err.to_string()),
+            FailedToSpawnChild(err) => write!(f, "Failed to spawn child: {err}", err = err.to_string()),
+        }
+    }
+}
+
+pub type RobResult<T> = result::Result::<T, RobError>;
+
 impl Job {
     pub fn new<S>(target: &str, deps: Vec::<S>, cmd: RobCommand) -> Job
     where
@@ -667,7 +693,7 @@ impl Job {
     }
 
     #[inline]
-    pub fn needs_rebuild(&self) -> IoResult::<bool> {
+    pub fn needs_rebuild(&self) -> RobResult::<bool> {
         if self.phony {
             Ok(true)
         } else {
@@ -675,8 +701,27 @@ impl Job {
         }
     }
 
-    fn execute(&mut self, sync: bool, exit_: bool) -> IoResult::<Vec::<Output>> {
-        if self.needs_rebuild()? {
+    fn execute(&mut self, sync: bool, exit_: bool, check: bool) -> RobResult::<Vec::<Output>> {
+        if !check {
+            let cmd = if self.reusable_cmd {
+                &mut self.cmd.clone()
+            } else {
+                &mut self.cmd
+            };
+            if sync {
+                return if exit_ {
+                    cmd.execute_all_sync()
+                } else {
+                    cmd.execute_all_sync_dont_exit()
+                }
+            } else {
+                return if exit_ {
+                    cmd.execute_all_async_and_wait()
+                } else {
+                    cmd.execute_all_async_and_wait_dont_exit()
+                }
+            }
+        } else if self.needs_rebuild()? {
             let cmd = if self.reusable_cmd {
                 &mut self.cmd.clone()
             } else {
@@ -701,20 +746,44 @@ impl Job {
         }
     }
 
-    pub fn execute_async_dont_exit(&mut self) -> IoResult::<Vec::<Output>> {
-        self.execute(false, false)
+    #[inline(always)]
+    pub fn execute_async_dont_exit(&mut self) -> RobResult::<Vec::<Output>> {
+        self.execute(false, false, true)
     }
 
-    pub fn execute_async(&mut self) -> IoResult::<Vec::<Output>> {
-        self.execute(false, true)
+    #[inline(always)]
+    pub fn execute_async(&mut self) -> RobResult::<Vec::<Output>> {
+        self.execute(false, true, true)
     }
 
-    pub fn execute_sync_dont_exit(&mut self) -> IoResult::<Vec::<Output>> {
-        self.execute(true, false)
+    #[inline(always)]
+    pub fn execute_sync_dont_exit(&mut self) -> RobResult::<Vec::<Output>> {
+        self.execute(true, false, true)
     }
 
-    pub fn execute_sync(&mut self) -> IoResult::<Vec::<Output>> {
-        self.execute(true, true)
+    #[inline(always)]
+    pub fn execute_sync(&mut self) -> RobResult::<Vec::<Output>> {
+        self.execute(true, true, true)
+    }
+
+    #[inline(always)]
+    pub fn execute_async_dont_exit_unchecked(&mut self) -> RobResult::<Vec::<Output>> {
+        self.execute(false, false, false)
+    }
+
+    #[inline(always)]
+    pub fn execute_async_unchecked(&mut self) -> RobResult::<Vec::<Output>> {
+        self.execute(false, true, false)
+    }
+
+    #[inline(always)]
+    pub fn execute_sync_dont_exit_unchecked(&mut self) -> RobResult::<Vec::<Output>> {
+        self.execute(true, false, false)
+    }
+
+    #[inline(always)]
+    pub fn execute_sync_unchecked(&mut self) -> RobResult::<Vec::<Output>> {
+        self.execute(true, true, false)
     }
 }
 
@@ -745,20 +814,26 @@ impl Rob {
         Ok(src_mod_time > bin_mod_time)
     }
 
-    pub fn needs_rebuild_many(bin: &str, srcs: &Vec::<String>) -> IoResult::<bool> {
+    pub fn needs_rebuild_many(bin: &str, srcs: &Vec::<String>) -> RobResult::<bool> {
+        // I collect times on purpose to check if all of the src files exist,
+        // to catch unexisting dependencies at `compile time` whether bin path exists or not.
+
+        let mut times = Vec::new();
+        for src in srcs.iter() {
+            match Rob::get_last_modification_time(src) {
+                Ok(time) => times.push(time),
+                Err(_) => return Err(RobError::NotFound(src.to_owned()))
+            }
+        }
+
         if !Rob::path_exists(bin) { return Ok(true) }
 
-        let bin_mod_time = Rob::get_last_modification_time(bin).map_err(|err| {
-            log!(ERROR, "{err}: {bin}"); err
-        })?;
-        for src in srcs {
-            let src_mod_time = Rob::get_last_modification_time(src).map_err(|err| {
-                log!(ERROR, "{err}: {src}"); err
-            })?;
-            if src_mod_time > bin_mod_time {
-                return Ok(true)
-            }
-        } Ok(false)
+        let bin_mod_time = match Rob::get_last_modification_time(bin) {
+            Ok(time) => time,
+            Err(_) => return Err(RobError::NotFound(bin.to_owned()))
+        };
+
+        Ok(times.into_iter().any(|src_mod_time| src_mod_time > bin_mod_time))
     }
 
     // The implementation idea is stolen from https://github.com/tsoding/nobuild,
@@ -948,7 +1023,7 @@ impl Rob {
         self
     }
 
-    fn execute_jobs(&mut self, sync: bool) -> IoResult::<Vec::<Vec::<Output>>> {
+    fn execute_jobs(&mut self, sync: bool) -> RobResult::<Vec::<Vec::<Output>>> {
         let mut outss = Vec::new();
         for job in self.jobs.iter_mut() {
             let outs = if sync {
@@ -961,12 +1036,12 @@ impl Rob {
     }
 
     #[inline]
-    pub fn execute_jobs_sync(&mut self) -> IoResult::<Vec::<Vec::<Output>>> {
+    pub fn execute_jobs_sync(&mut self) -> RobResult::<Vec::<Vec::<Output>>> {
         self.execute_jobs(true)
     }
 
     #[inline]
-    pub fn execute_jobs_async(&mut self) -> IoResult::<Vec::<Vec::<Output>>> {
+    pub fn execute_jobs_async(&mut self) -> RobResult::<Vec::<Vec::<Output>>> {
         self.execute_jobs(false)
     }
 
@@ -998,7 +1073,7 @@ impl Rob {
     }
 
     #[inline]
-    pub fn execute_all_sync(&mut self) -> IoResult::<Vec::<Output>> {
+    pub fn execute_all_sync(&mut self) -> RobResult::<Vec::<Output>> {
         self.cmd.execute_all_sync()
     }
 
