@@ -702,26 +702,7 @@ impl Job {
     }
 
     fn execute(&mut self, sync: bool, exit_: bool, check: bool) -> RobResult::<Vec::<Output>> {
-        if !check {
-            let cmd = if self.reusable_cmd {
-                &mut self.cmd.clone()
-            } else {
-                &mut self.cmd
-            };
-            if sync {
-                return if exit_ {
-                    cmd.execute_all_sync()
-                } else {
-                    cmd.execute_all_sync_dont_exit()
-                }
-            } else {
-                return if exit_ {
-                    cmd.execute_all_async_and_wait()
-                } else {
-                    cmd.execute_all_async_and_wait_dont_exit()
-                }
-            }
-        } else if self.needs_rebuild()? {
+        if !check || self.needs_rebuild()? {
             let cmd = if self.reusable_cmd {
                 &mut self.cmd.clone()
             } else {
